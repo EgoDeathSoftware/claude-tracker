@@ -1,7 +1,7 @@
 import type { SessionStatus } from '@/types.ts';
 
 const CONFIG: Record<SessionStatus, { label: string; classes: string }> = {
-  live:    { label: '● LIVE',    classes: 'bg-blue-100 text-blue-700 font-semibold' },
+  live:    { label: '● LIVE',    classes: 'bg-blue-100 text-blue-700 font-semibold animate-pulse' },
   waiting: { label: '⏸ WAITING', classes: 'bg-amber-100 text-amber-700 font-semibold' },
   done:    { label: '✓ DONE',    classes: 'bg-green-100 text-green-700 font-semibold' },
 };

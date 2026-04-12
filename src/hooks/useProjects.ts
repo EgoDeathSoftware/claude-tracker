@@ -1,12 +1,14 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import type { Project } from '@/types.ts';
 
 export function useProjects() {
   const [projects, setProjects] = useState<Project[]>([]);
 
-  useEffect(() => {
+  const refresh = useCallback(() => {
     void fetch('/api/projects').then(r => r.json()).then(setProjects);
   }, []);
 
-  return { projects, setProjects };
+  useEffect(() => { refresh(); }, [refresh]);
+
+  return { projects, setProjects, refresh };
 }

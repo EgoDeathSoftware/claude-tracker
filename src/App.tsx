@@ -11,16 +11,18 @@ export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
-  const { projects } = useProjects();
+  const { projects, refresh } = useProjects();
   const { sessions, setSessions } = useSessions(selectedProjectId ?? undefined);
 
   const handleCreated = useCallback((session: Session) => {
     setSessions(prev => [session, ...prev.filter(s => s.id !== session.id)]);
-  }, [setSessions]);
+    refresh();
+  }, [setSessions, refresh]);
 
   const handleUpdated = useCallback((session: Session) => {
     setSessions(prev => prev.map(s => s.id === session.id ? session : s));
-  }, [setSessions]);
+    refresh();
+  }, [setSessions, refresh]);
 
   useSSE(handleCreated, handleUpdated);
 
