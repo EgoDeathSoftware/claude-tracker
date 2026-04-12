@@ -1,0 +1,18 @@
+services:
+  app:
+    build:
+      context: .
+      target: dev
+    ports:
+      - "5173:5173"
+      - "3001:3001"
+    volumes:
+      - ./src:/app/src
+      - ./server/src:/app/server/src
+      - ./server/test:/app/server/test
+      - ./index.html:/app/index.html
+      - ${CLAUDE_DIR}:/claude:ro
+    environment:
+      - CLAUDE_DIR=/claude
+      - PORT=3001
+    restart: unless-stopped
