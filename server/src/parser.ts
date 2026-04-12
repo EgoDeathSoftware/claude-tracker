@@ -18,7 +18,7 @@ interface RawUserRecord {
   slug?: string;
   cwd?: string;
   sessionId?: string;
-  message: { role: 'user'; content: string };
+  message: { role: 'user'; content: string | ContentBlock[] };
 }
 
 interface RawAssistantRecord {
@@ -60,6 +60,17 @@ function truncate(s: string, max: number): string {
   return s.length <= max ? s : s.slice(0, max - 1) + '…';
 }
 
+function extractUserText(content: string | ContentBlock[]): string {
+  if (typeof content === 'string') return content;
+  const textParts: string[] = [];
+  for (const block of content) {
+    if (block.type === 'text' && typeof block.text === 'string') {
+      textParts.push(block.text);
+    }
+  }
+  return textParts.join('\n');
+}
+
 async function readLines(filePath: string): Promise<string[]> {
   const lines: string[] = [];
   const rl = createInterface({ input: createReadStream(filePath), crlfDelay: Infinity });
@@ -99,10 +110,15 @@ export async function parseSession(filePath: string, projectId: string): Promise
       if (!cwd && record.cwd) cwd = record.cwd;
       if (record.sessionId) sessionId = record.sessionId;
 
-      if (turnCount === 0) {
-        title = truncate(record.message.content, TITLE_MAX_LEN);
+      const userText = extractUserText(record.message.content);
+      const hasRealText = userText.trim().length > 0;
+
+      if (hasRealText) {
+        if (turnCount === 0) {
+          title = truncate(userText, TITLE_MAX_LEN);
+        }
+        turnCount++;
       }
-      turnCount++;
 
       messages.push({
         uuid: record.uuid,

@@ -24,11 +24,46 @@ function ToolUseBlock({ block }: { block: ContentBlock }) {
   );
 }
 
+function renderToolResultContent(content: string | ContentBlock[] | undefined): string {
+  if (content === undefined) return '';
+  if (typeof content === 'string') return content;
+  const parts: string[] = [];
+  for (const b of content) {
+    if (b.type === 'text' && typeof b.text === 'string') parts.push(b.text);
+  }
+  return parts.join('\n');
+}
+
+function ToolResultBlock({ block }: { block: ContentBlock }) {
+  const [expanded, setExpanded] = useState(false);
+  const preview = renderToolResultContent(block.content);
+  return (
+    <div className="mt-1 border border-gray-200 rounded bg-green-50 text-[11px]">
+      <button
+        type="button"
+        className="w-full text-left px-2 py-1 flex items-center justify-between text-gray-500"
+        onClick={() => setExpanded(v => !v)}
+      >
+        <span>↳ Tool result</span>
+        <span className="text-gray-300">{expanded ? '▲' : '▼'}</span>
+      </button>
+      {expanded && preview && (
+        <pre className="px-2 pb-2 text-gray-600 overflow-x-auto whitespace-pre-wrap">
+          {preview.slice(0, 800)}
+        </pre>
+      )}
+    </div>
+  );
+}
+
 function renderContent(content: string | ContentBlock[]): ReactNode {
-  if (typeof content === 'string') return <p className="whitespace-pre-wrap">{content}</p>;
+  if (typeof content === 'string') {
+    return <p className="whitespace-pre-wrap">{content}</p>;
+  }
   return content.map((block, i) => {
     if (block.type === 'text') return <p key={i} className="whitespace-pre-wrap">{block.text}</p>;
     if (block.type === 'tool_use') return <ToolUseBlock key={i} block={block} />;
+    if (block.type === 'tool_result') return <ToolResultBlock key={i} block={block} />;
     if (block.type === 'thinking') return null;
     return null;
   });

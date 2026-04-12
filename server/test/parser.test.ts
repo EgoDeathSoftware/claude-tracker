@@ -116,4 +116,27 @@ describe('parseSession edge cases', () => {
       await rm(dir, { recursive: true });
     }
   });
+
+  it('handles user messages with array content (tool results) without crashing', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'parser-test-'));
+    const file = join(dir, 'tool-result.jsonl');
+    const content = [
+      '{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"timestamp":"2026-04-01T10:00:00.000Z","message":{"role":"user","content":"hello"}}',
+      '{"type":"assistant","uuid":"a1","parentUuid":"u1","isSidechain":false,"timestamp":"2026-04-01T10:00:01.000Z","message":{"role":"assistant","model":"claude-sonnet-4-6","content":[{"type":"tool_use","id":"tu1","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":5,"output_tokens":5}}}',
+      '{"type":"user","uuid":"u2","parentUuid":"a1","isSidechain":false,"timestamp":"2026-04-01T10:00:02.000Z","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"tu1","content":"file1.txt\\nfile2.txt"}]}}',
+    ].join('\n');
+    await writeFile(file, content);
+    try {
+      const session = await parseSession(file, 'proj-1');
+      // Title should come from first user text message, not the tool result
+      expect(session.title).toBe('hello');
+      expect(typeof session.title).toBe('string');
+      // Turn count should be 1 (only the real text message, not the tool-result continuation)
+      expect(session.turnCount).toBe(1);
+      // All 3 messages should still be preserved
+      expect(session.messages).toHaveLength(3);
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
 });
