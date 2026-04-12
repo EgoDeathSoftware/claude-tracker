@@ -1,0 +1,19 @@
+{
+  "name": "@claude-tracker/server",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node --watch dist/index.js",
+    "build": "tsc",
+    "predev": "tsc"
+  },
+  "dependencies": {
+    "hono": "4.7.7",
+    "@hono/node-server": "1.14.1",
+    "chokidar": "4.0.3"
+  },
+  "devDependencies": {
+    "vitest": "3.1.2",
+    "typescript": "5.8.3"
+  }
+}
