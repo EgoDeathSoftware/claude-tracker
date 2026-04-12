@@ -35,7 +35,19 @@ interface RawAssistantRecord {
   };
 }
 
-type RawRecord = RawUserRecord | RawAssistantRecord | { type: string };
+function parseRecord(line: string): RawUserRecord | RawAssistantRecord | null {
+  let obj: unknown;
+  try {
+    obj = JSON.parse(line);
+  } catch {
+    return null;
+  }
+  if (typeof obj !== 'object' || obj === null) return null;
+  const record = obj as { type?: unknown };
+  if (record.type === 'user') return obj as RawUserRecord;
+  if (record.type === 'assistant') return obj as RawAssistantRecord;
+  return null;
+}
 
 function deriveStatus(mtimeMs: number, lastType: 'user' | 'assistant' | null): SessionStatus {
   const ageMs = Date.now() - mtimeMs;
@@ -73,54 +85,53 @@ export async function parseSession(filePath: string, projectId: string): Promise
   let lastType: 'user' | 'assistant' | null = null;
 
   for (const line of lines) {
-    let record: RawRecord;
-    try {
-      record = JSON.parse(line) as RawRecord;
-    } catch {
-      continue;
-    }
+    const record = parseRecord(line);
+    if (!record) continue;
 
     if (record.type === 'user') {
-      const r = record as RawUserRecord;
-      if (r.isSidechain) continue;
+      if (record.isSidechain) continue;
 
-      if (!firstTimestamp) firstTimestamp = r.timestamp;
-      lastTimestamp = r.timestamp;
+      if (!firstTimestamp) firstTimestamp = record.timestamp;
+      lastTimestamp = record.timestamp;
       lastType = 'user';
 
-      if (!slug && r.slug) slug = r.slug;
-      if (!cwd && r.cwd) cwd = r.cwd;
-      if (r.sessionId) sessionId = r.sessionId;
+      if (!slug && record.slug) slug = record.slug;
+      if (!cwd && record.cwd) cwd = record.cwd;
+      if (record.sessionId) sessionId = record.sessionId;
 
       if (turnCount === 0) {
-        title = truncate(r.message.content, TITLE_MAX_LEN);
+        title = truncate(record.message.content, TITLE_MAX_LEN);
       }
       turnCount++;
 
-      messages.push({ uuid: r.uuid, type: 'user', timestamp: r.timestamp, content: r.message.content });
-    } else if (record.type === 'assistant') {
-      const r = record as RawAssistantRecord;
-      if (r.isSidechain) continue;
+      messages.push({
+        uuid: record.uuid,
+        type: 'user',
+        timestamp: record.timestamp,
+        content: record.message.content,
+      });
+    } else {
+      if (record.isSidechain) continue;
 
-      if (!firstTimestamp) firstTimestamp = r.timestamp;
-      lastTimestamp = r.timestamp;
+      if (!firstTimestamp) firstTimestamp = record.timestamp;
+      lastTimestamp = record.timestamp;
       lastType = 'assistant';
 
-      model = r.message.model ?? model;
+      model = record.message.model ?? model;
 
-      if (r.message.usage) {
-        totalCostUsd += computeCost(r.message.usage, r.message.model);
+      if (record.message.usage) {
+        totalCostUsd += computeCost(record.message.usage, record.message.model);
       }
 
       const assistantMsg: SessionMessage = {
-        uuid: r.uuid,
+        uuid: record.uuid,
         type: 'assistant',
-        timestamp: r.timestamp,
-        content: r.message.content,
-        model: r.message.model,
+        timestamp: record.timestamp,
+        content: record.message.content,
+        model: record.message.model,
       };
-      if (r.message.usage) {
-        assistantMsg.usage = r.message.usage;
+      if (record.message.usage) {
+        assistantMsg.usage = record.message.usage;
       }
       messages.push(assistantMsg);
     }
