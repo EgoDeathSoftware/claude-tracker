@@ -20,12 +20,19 @@ const DEFAULT_PRICING: ModelPricing = {
   outputPerToken: 15/1e6,
 };
 
+const warnedModels = new Set<string>();
+
 export function computeCost(usage: MessageUsage, model: string): number {
-  const p = PRICING[model] ?? DEFAULT_PRICING;
+  const p = PRICING[model];
+  if (!p && !warnedModels.has(model)) {
+    warnedModels.add(model);
+    console.warn(`[pricing] Unknown model "${model}", using default (sonnet) pricing`);
+  }
+  const rates = p ?? DEFAULT_PRICING;
   return (
-    usage.input_tokens * p.inputPerToken +
-    (usage.cache_creation_input_tokens ?? 0) * p.cacheWritePerToken +
-    (usage.cache_read_input_tokens ?? 0) * p.cacheReadPerToken +
-    usage.output_tokens * p.outputPerToken
+    usage.input_tokens * rates.inputPerToken +
+    (usage.cache_creation_input_tokens ?? 0) * rates.cacheWritePerToken +
+    (usage.cache_read_input_tokens ?? 0) * rates.cacheReadPerToken +
+    usage.output_tokens * rates.outputPerToken
   );
 }
