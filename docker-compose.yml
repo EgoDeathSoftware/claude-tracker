@@ -11,7 +11,7 @@ services:
       - ./server/src:/app/server/src
       - ./server/test:/app/server/test
       - ./index.html:/app/index.html
-      - ${CLAUDE_DIR:-~/.claude}:/claude:ro
+      - ${CLAUDE_DIR}:/claude:ro
     environment:
       - CLAUDE_DIR=/claude
       - PORT=3001

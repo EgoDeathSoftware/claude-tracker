@@ -9,8 +9,10 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "verbatimModuleSyntax": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "isolatedModules": true,
     "skipLibCheck": true,
     "lib": ["ES2022", "DOM", "DOM.Iterable"]
   },
-  "include": ["src/**/*", "server/src/types.ts", "server/src/pricing.ts"]
+  "include": ["src/**/*"]
 }

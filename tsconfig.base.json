@@ -8,6 +8,8 @@
     "exactOptionalPropertyTypes": true,
     "noImplicitOverride": true,
     "verbatimModuleSyntax": true,
+    "noPropertyAccessFromIndexSignature": true,
+    "isolatedModules": true,
     "skipLibCheck": true
   }
 }
