@@ -37,15 +37,14 @@ export function buildApp(watcher: SessionWatcher): Hono {
         void stream.writeSSE({ data: 'ping' });
       }, 15_000);
 
-      stream.onAbort(() => {
-        clearInterval(interval);
-        watcher.off('session-created', onCreate);
-        watcher.off('session-updated', onUpdate);
-      });
-
-      // Hold the connection open until aborted
+      // Hold the connection open until aborted; clean up all resources on abort.
       await new Promise<void>(resolve => {
-        stream.onAbort(() => resolve());
+        stream.onAbort(() => {
+          clearInterval(interval);
+          watcher.off('session-created', onCreate);
+          watcher.off('session-updated', onUpdate);
+          resolve();
+        });
       });
     });
   });
