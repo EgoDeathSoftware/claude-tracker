@@ -4,6 +4,7 @@ import { SessionList } from '@/components/SessionList.tsx';
 import { SessionDetail } from '@/components/SessionDetail.tsx';
 import { PromptLibrary } from '@/components/PromptLibrary.tsx';
 import { SessionComparison } from '@/components/SessionComparison.tsx';
+import { ConfigPanel } from '@/components/config/ConfigPanel.tsx';
 import { useProjects } from '@/hooks/useProjects.ts';
 import { useSessions } from '@/hooks/useSessions.ts';
 import { useSSE } from '@/hooks/useSSE.ts';
@@ -19,6 +20,7 @@ export default function App() {
   const [promptsOpen, setPromptsOpen] = useState(false);
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
+  const [configOpen, setConfigOpen] = useState(false);
 
   const { projects, refresh } = useProjects();
   const { sessions, setSessions } = useSessions(
@@ -68,9 +70,23 @@ export default function App() {
           onSelect={id => {
             setSelectedProjectId(id);
             setSelectedSessionId(null);
+            setConfigOpen(false);
           }}
         />
         <div className="border-t border-gray-200 p-2 space-y-1">
+          <button
+            onClick={() => {
+              setConfigOpen(!configOpen);
+              if (!configOpen) setSelectedSessionId(null);
+            }}
+            className={`w-full text-left px-3 py-1.5 text-xs rounded
+              ${configOpen
+                ? 'bg-indigo-50 text-indigo-700'
+                : 'text-gray-600 hover:bg-gray-100'
+              }`}
+          >
+            Configuration
+          </button>
           <button
             onClick={() => setPromptsOpen(true)}
             className="w-full text-left px-3 py-1.5 text-xs
@@ -93,16 +109,24 @@ export default function App() {
           </button>
         </div>
       </div>
-      <SessionList
-        sessions={sessions}
-        selectedId={selectedSessionId}
-        projectId={selectedProjectId ?? undefined}
-        onSelect={setSelectedSessionId}
-        compareMode={compareMode}
-        compareIds={compareIds}
-        onToggleCompare={toggleCompare}
-      />
-      <SessionDetail session={selectedSession} />
+      {!configOpen && (
+        <SessionList
+          sessions={sessions}
+          selectedId={selectedSessionId}
+          projectId={selectedProjectId ?? undefined}
+          onSelect={id => {
+            setSelectedSessionId(id);
+            setConfigOpen(false);
+          }}
+          compareMode={compareMode}
+          compareIds={compareIds}
+          onToggleCompare={toggleCompare}
+        />
+      )}
+      {configOpen
+        ? <ConfigPanel />
+        : <SessionDetail session={selectedSession} />
+      }
 
       <PromptLibrary
         open={promptsOpen}

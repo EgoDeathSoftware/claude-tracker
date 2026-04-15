@@ -12,7 +12,7 @@ const db = new TrackerDB(join(dataDir, 'tracker.db'));
 const watcher = new SessionWatcher(claudeDir, db);
 await watcher.start();
 
-const app = buildApp(watcher, db);
+const app = buildApp(watcher, db, claudeDir);
 serve({ fetch: app.fetch, port }, () => {
   console.log(`Claude Tracker server running on http://localhost:${port}`);
   console.log(`Watching: ${claudeDir}/projects`);

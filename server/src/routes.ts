@@ -4,9 +4,26 @@ import { streamSSE } from 'hono/streaming';
 import type { SessionWatcher } from './watcher.ts';
 import type { TrackerDB } from './db.ts';
 import { readRawLines } from './parser.js';
+import {
+  readSettings,
+  writeSettings,
+  readClaudeJson,
+  writeClaudeJson,
+  listClaudeMdFiles,
+  readClaudeMd,
+  writeClaudeMd,
+  listHookScripts,
+  writeHookScript,
+} from './config.js';
+import type { SettingsJson, McpServer } from './config.js';
 
-export function buildApp(watcher: SessionWatcher, db: TrackerDB): Hono {
+export function buildApp(
+  watcher: SessionWatcher,
+  db: TrackerDB,
+  claudeDir: string,
+): Hono {
   const app = new Hono();
+  const homeDir = claudeDir.replace(/\/\.claude$/, '');
 
   app.use('*', cors({ origin: 'http://localhost:5173' }));
 
@@ -120,6 +137,86 @@ export function buildApp(watcher: SessionWatcher, db: TrackerDB): Hono {
       a: summarizeForComparison(a),
       b: summarizeForComparison(b),
     });
+  });
+
+  // --- Config: settings.json ---
+
+  app.get('/api/config/settings', async c => {
+    return c.json(await readSettings(claudeDir));
+  });
+
+  app.put('/api/config/settings', async c => {
+    const body = await c.req.json<SettingsJson>();
+    await writeSettings(claudeDir, body);
+    return c.json({ ok: true });
+  });
+
+  // --- Config: CLAUDE.md files ---
+
+  app.get('/api/config/claude-md', async c => {
+    return c.json(await listClaudeMdFiles(claudeDir));
+  });
+
+  app.get('/api/config/claude-md/read', async c => {
+    const filePath = c.req.query('path');
+    if (!filePath) return c.json({ error: 'path required' }, 400);
+    const content = await readClaudeMd(filePath);
+    return c.json({ path: filePath, content });
+  });
+
+  app.put('/api/config/claude-md', async c => {
+    const body = await c.req.json<{
+      path?: string;
+      content?: string;
+    }>();
+    if (!body.path || body.content === undefined) {
+      return c.json({ error: 'path and content required' }, 400);
+    }
+    await writeClaudeMd(body.path, body.content);
+    return c.json({ ok: true });
+  });
+
+  // --- Config: MCP servers ---
+
+  app.get('/api/config/mcp', async c => {
+    const data = await readClaudeJson(homeDir);
+    return c.json(data.mcpServers ?? {});
+  });
+
+  app.put('/api/config/mcp/:name', async c => {
+    const name = c.req.param('name');
+    const server = await c.req.json<McpServer>();
+    const data = await readClaudeJson(homeDir);
+    if (!data.mcpServers) data.mcpServers = {};
+    data.mcpServers[name] = server;
+    await writeClaudeJson(homeDir, data);
+    return c.json({ ok: true });
+  });
+
+  app.delete('/api/config/mcp/:name', async c => {
+    const name = c.req.param('name');
+    const data = await readClaudeJson(homeDir);
+    if (data.mcpServers) {
+      delete data.mcpServers[name];
+    }
+    await writeClaudeJson(homeDir, data);
+    return c.json({ ok: true });
+  });
+
+  // --- Config: Hook scripts ---
+
+  app.get('/api/config/hooks', async c => {
+    return c.json(await listHookScripts(claudeDir));
+  });
+
+  app.put('/api/config/hooks/:name', async c => {
+    const name = c.req.param('name');
+    const body = await c.req.json<{ content?: string }>();
+    if (body.content === undefined) {
+      return c.json({ error: 'content required' }, 400);
+    }
+    await writeHookScript(claudeDir, name, body.content);
+    return c.json({ ok: true });
   });
 
   // --- SSE ---
