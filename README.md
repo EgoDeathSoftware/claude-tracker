@@ -102,6 +102,25 @@ Run tests:
 docker compose run --rm app bash -c "cd server && pnpm build && npx vitest run"
 ```
 
+### Dev Container + Python Attach Debugging
+
+This repo now includes a Dev Container configuration that reuses the `app` service.
+
+1. Open the project in VS Code.
+2. Run: **Dev Containers: Reopen in Container**.
+3. Start your Python program in the container with debugpy listening on `5678`:
+
+```bash
+python -m debugpy --listen 0.0.0.0:5678 --wait-for-client /workspaces/claude-project-tracker/path/to/your_program.py
+```
+
+4. In VS Code, start the debugger config:
+    **Python: Attach (Remote Container :5678)**
+
+Notes:
+- The devcontainer forwards ports `5173`, `3001`, and `5678`.
+- Python + `debugpy` are installed in the dev image.
+
 Rebuild the image after changing dependencies or the Dockerfile:
 ```bash
 docker compose build

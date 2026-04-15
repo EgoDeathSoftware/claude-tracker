@@ -12,7 +12,12 @@ services:
       - ./server/test:/app/server/test
       - ./index.html:/app/index.html
       - ${CLAUDE_DIR}:/claude:ro
+      - tracker-data:/app/data
     environment:
       - CLAUDE_DIR=/claude
+      - DATA_DIR=/app/data
       - PORT=3001
     restart: unless-stopped
+
+volumes:
+  tracker-data:
