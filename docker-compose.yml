@@ -7,10 +7,10 @@ services:
       - "5173:5173"
       - "3001:3001"
     volumes:
-      - ./src:/app/src
+      - ./client/src:/app/client/src
+      - ./client/index.html:/app/client/index.html
       - ./server/src:/app/server/src
       - ./server/test:/app/server/test
-      - ./index.html:/app/index.html
       - ${CLAUDE_DIR}:/claude:ro
       - tracker-data:/app/data
     environment:

@@ -3,23 +3,15 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "concurrently \"pnpm --filter server dev\" \"vite --host 0.0.0.0\"",
-    "build": "vite build",
-    "lint": "oxlint src server/src",
-    "test": "vitest run"
+    "dev": "concurrently \"pnpm --filter @claude-tracker/server dev\" \"pnpm --filter @claude-tracker/client dev\"",
+    "build": "pnpm --filter @claude-tracker/server build && pnpm --filter @claude-tracker/client build",
+    "typecheck": "pnpm --filter @claude-tracker/server build && pnpm --filter @claude-tracker/client typecheck",
+    "lint": "oxlint client/src server/src",
+    "test": "pnpm --filter @claude-tracker/server test"
   },
   "devDependencies": {
     "concurrently": "9.1.2",
-    "vite": "6.3.2",
-    "@vitejs/plugin-react": "4.4.1",
-    "tailwindcss": "4.1.4",
-    "@tailwindcss/vite": "4.1.4",
     "oxlint": "0.16.6",
-    "vitest": "3.1.2",
-    "typescript": "5.8.3",
-    "@types/react": "19.1.2",
-    "@types/react-dom": "19.1.2",
-    "react": "19.1.0",
-    "react-dom": "19.1.0"
+    "vitest": "3.1.2"
   }
 }

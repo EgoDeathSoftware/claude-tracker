@@ -8,6 +8,18 @@ importers:
 
   .:
     devDependencies:
+      concurrently:
+        specifier: 9.1.2
+        version: 9.1.2
+      oxlint:
+        specifier: 0.16.6
+        version: 0.16.6
+      vitest:
+        specifier: 3.1.2
+        version: 3.1.2(@types/node@22.15.3)(jiti@2.6.1)(lightningcss@1.29.2)
+
+  client:
+    devDependencies:
       '@tailwindcss/vite':
         specifier: 4.1.4
         version: 4.1.4(vite@6.3.2(@types/node@22.15.3)(jiti@2.6.1)(lightningcss@1.29.2))
@@ -20,12 +32,6 @@ importers:
       '@vitejs/plugin-react':
         specifier: 4.4.1
         version: 4.4.1(vite@6.3.2(@types/node@22.15.3)(jiti@2.6.1)(lightningcss@1.29.2))
-      concurrently:
-        specifier: 9.1.2
-        version: 9.1.2
-      oxlint:
-        specifier: 0.16.6
-        version: 0.16.6
       react:
         specifier: 19.1.0
         version: 19.1.0
@@ -41,9 +47,6 @@ importers:
       vite:
         specifier: 6.3.2
         version: 6.3.2(@types/node@22.15.3)(jiti@2.6.1)(lightningcss@1.29.2)
-      vitest:
-        specifier: 3.1.2
-        version: 3.1.2(@types/node@22.15.3)(jiti@2.6.1)(lightningcss@1.29.2)
 
   server:
     dependencies:

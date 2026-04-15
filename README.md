@@ -1,142 +1,176 @@
 # Claude Project Tracker
 
-A local webapp that tracks Claude Code agent sessions in real-time. Browse project histories, read past conversations, and watch live sessions across every project you've worked on.
+A local webapp that tracks Claude Code agent sessions in real-time. Browse project histories, inspect tool calls, analyze costs, manage configuration, and watch live sessions across every project.
 
-## What it does
+## Features
 
-- **Project view** — All Claude Code projects (`~/.claude/projects/*`) with session counts and live indicators
-- **Session list** — Every session per project, sorted by last activity, with LIVE / WAITING / DONE status
-- **Session detail** — Title, model, cost, duration, turn count, and an expandable conversation thread
-- **Conversation thread** — Messages rendered as bubbles with tool calls and tool results as collapsible blocks
-- **Live updates** — New and updated sessions push to the UI via SSE without refresh
+**Session tracking**
+- Three-panel UI: projects, sessions, detail
+- Live/waiting/done status detection via file mtime
+- Real-time updates via Server-Sent Events
+
+**Observability & audit**
+- Raw JSONL log viewer with filtering and expandable entries
+- Tool call audit log — every tool call with input, output, duration, cost
+- File change timeline grouped by path with read/write/edit markers
+- Cost breakdown by tool with visual bar chart
+- Hook execution trace and permission event log
+- Agent dispatch tree showing parent → subagent relationships
+
+**Session management**
+- Full-text search across all session content (SQLite FTS5)
+- Session tagging with colored pills
+- Prompt library for saving and reusing templates
+- Side-by-side session comparison (metrics, tools, files)
+
+**Configuration management**
+- `settings.json` editor with JSON validation
+- CLAUDE.md file editor (global + language-specific)
+- MCP server manager — add, edit, remove servers
+- Hooks manager — view config and edit hook scripts
 
 ## Tech Stack
 
-- **Runtime:** Docker (Node 22, pnpm 10.4.1) — nothing installed on host
-- **Backend:** Hono, Chokidar 5, TypeScript strict
-- **Frontend:** React 19, Vite 6, Tailwind 4
-- **Testing:** Vitest
-
-## Prerequisites
-
-- Docker + Docker Compose
-- A `~/.claude/` directory with project session files (Claude Code installed)
+| Layer | Technology |
+|-------|-----------|
+| Runtime | Docker · Node 22 · pnpm 10 |
+| Backend | Hono 4 · Chokidar · better-sqlite3 · TypeScript strict |
+| Frontend | React 19 · Vite 6 · Tailwind 4 |
+| Testing | Vitest |
 
 ## Quick Start
 
 ```bash
-# 1. Copy env template and set your claude directory
+# 1. Copy env and set your claude directory
 cp .env.example .env
 # Edit .env — set CLAUDE_DIR to your ~/.claude path
 
-# 2. Start the app
+# 2. Start
 docker compose up -d
 
-# 3. Open the UI
+# 3. Open
 open http://localhost:5173
 ```
 
-The first startup builds the Docker image (~1–2 minutes). Subsequent starts are instant.
+First build takes ~1-2 minutes. Subsequent starts are instant.
 
-To stop:
+### Without Docker
+
 ```bash
-docker compose down
+pnpm install
+pnpm dev
+# Server on :3001, UI on :5173
 ```
 
-## How it works
+## How It Works
 
-1. The Hono server mounts `~/.claude/` read-only inside the container
-2. On startup it scans `~/.claude/projects/**/*.jsonl` and parses each session file
-3. Chokidar watches the same pattern and re-parses on `add`/`change` events
-4. REST endpoints (`/api/projects`, `/api/sessions`, `/api/sessions/:id`) serve the in-memory index
-5. An SSE endpoint (`/api/events`) pushes `session-created` / `session-updated` events to the frontend
-6. The React frontend renders the three-panel layout and auto-refreshes on SSE events
+1. The server scans `~/.claude/projects/**/*.jsonl` and parses each session file
+2. Chokidar watches for new/changed files and re-parses on events
+3. REST endpoints serve the in-memory session index
+4. SSE pushes `session-created`/`session-updated` events to the frontend
+5. SQLite stores the FTS index, tags, and prompts (persistent across restarts)
 
 **Session status** is derived from file mtime:
-- `LIVE` — modified within the last 60 seconds
-- `WAITING` — last activity 1–5 minutes ago and the last message is from the user
-- `DONE` — older than 5 minutes
+- **LIVE** — modified within the last 60 seconds
+- **WAITING** — 1-5 minutes ago, last message is from the user
+- **DONE** — older than 5 minutes
 
 ## Project Structure
 
 ```
 claude-project-tracker/
-├── Dockerfile               # Multi-stage Node 22 + pnpm build
-├── docker-compose.yml       # Mounts ~/.claude read-only, exposes 5173 + 3001
-├── pnpm-workspace.yaml      # Workspace root: server + frontend
-├── package.json             # Frontend + dev orchestration
-│
-├── server/                  # Hono backend
+├── server/                      # Hono backend
 │   ├── src/
-│   │   ├── types.ts         # Session, Project, ContentBlock, SessionMessage
-│   │   ├── pricing.ts       # Model pricing + computeCost()
-│   │   ├── parser.ts        # JSONL → Session object
-│   │   ├── watcher.ts       # Chokidar file watcher + in-memory index
-│   │   ├── routes.ts        # REST + SSE endpoints
-│   │   └── index.ts         # Entry point
-│   └── test/                # Vitest parser tests (14 tests)
+│   │   ├── index.ts             # Entry point
+│   │   ├── routes.ts            # REST + SSE + config endpoints
+│   │   ├── parser.ts            # JSONL → Session object
+│   │   ├── watcher.ts           # Chokidar file watcher + in-memory index
+│   │   ├── db.ts                # SQLite (FTS5 search, tags, prompts)
+│   │   ├── config.ts            # Read/write settings, CLAUDE.md, MCP, hooks
+│   │   ├── types.ts             # Shared type definitions
+│   │   └── pricing.ts           # Model pricing + cost computation
+│   └── test/                    # Vitest tests (36 tests)
 │
-└── src/                     # React frontend
-    ├── App.tsx              # Three-panel layout + SSE wiring
-    ├── types.ts             # Frontend type copy (mirrors server/src/types.ts)
-    ├── components/
-    │   ├── ProjectList.tsx       # Left sidebar
-    │   ├── SessionList.tsx       # Middle panel
-    │   ├── SessionDetail.tsx     # Right panel
-    │   ├── SessionSummary.tsx    # Metadata card
-    │   ├── ConversationThread.tsx # Expandable message list
-    │   ├── MessageBubble.tsx     # Single message + tool call/result blocks
-    │   └── StatusBadge.tsx       # LIVE / WAITING / DONE pill
-    ├── hooks/
-    │   ├── useProjects.ts        # Project list state + refresh
-    │   ├── useSessions.ts        # Session list per project
-    │   └── useSSE.ts             # Server-Sent Events subscription
-    └── lib/
-        └── format.ts             # Duration, cost, relative time helpers
-```
-
-## Development
-
-Run tests:
-```bash
-docker compose run --rm app bash -c "cd server && pnpm build && npx vitest run"
-```
-
-### Dev Container + Python Attach Debugging
-
-This repo now includes a Dev Container configuration that reuses the `app` service.
-
-1. Open the project in VS Code.
-2. Run: **Dev Containers: Reopen in Container**.
-3. Start your Python program in the container with debugpy listening on `5678`:
-
-```bash
-python -m debugpy --listen 0.0.0.0:5678 --wait-for-client /workspaces/claude-project-tracker/path/to/your_program.py
-```
-
-4. In VS Code, start the debugger config:
-    **Python: Attach (Remote Container :5678)**
-
-Notes:
-- The devcontainer forwards ports `5173`, `3001`, and `5678`.
-- Python + `debugpy` are installed in the dev image.
-
-Rebuild the image after changing dependencies or the Dockerfile:
-```bash
-docker compose build
+├── client/                      # React frontend
+│   ├── index.html
+│   ├── vite.config.ts
+│   ├── tsconfig.json
+│   └── src/
+│       ├── App.tsx              # Root layout + routing
+│       ├── types.ts             # Frontend types (mirrors server)
+│       ├── components/
+│       │   ├── ProjectList.tsx
+│       │   ├── SessionList.tsx       # Search bar + tag filters
+│       │   ├── SessionDetail.tsx     # Tabbed detail view
+│       │   ├── SearchBar.tsx         # FTS search with results dropdown
+│       │   ├── TagPills.tsx          # Inline tag management
+│       │   ├── PromptLibrary.tsx     # Prompt CRUD modal
+│       │   ├── SessionComparison.tsx # Side-by-side diff modal
+│       │   ├── ToolAuditLog.tsx
+│       │   ├── FileTimeline.tsx
+│       │   ├── CostBreakdown.tsx
+│       │   ├── PermissionsHooks.tsx
+│       │   ├── AgentTree.tsx
+│       │   ├── RawLogViewer.tsx
+│       │   └── config/              # Configuration editors
+│       │       ├── ConfigPanel.tsx
+│       │       ├── SettingsEditor.tsx
+│       │       ├── ClaudeMdEditor.tsx
+│       │       ├── McpManager.tsx
+│       │       └── HooksManager.tsx
+│       ├── hooks/
+│       │   ├── useProjects.ts
+│       │   ├── useSessions.ts
+│       │   ├── useSSE.ts
+│       │   ├── useSearch.ts
+│       │   ├── useTags.ts
+│       │   ├── usePrompts.ts
+│       │   └── useConfig.ts
+│       └── lib/
+│           └── format.ts
+│
+├── Dockerfile
+├── docker-compose.yml
+├── tsconfig.base.json           # Shared TS compiler options
+└── pnpm-workspace.yaml          # Workspace: server + client
 ```
 
 ## Configuration
 
-`.env` overrides:
-
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `CLAUDE_DIR` | *(required)* | Absolute path to your `~/.claude/` directory on the host |
-| `PORT` | `3001` | Server port inside the container |
+| `CLAUDE_DIR` | `~/.claude` | Path to Claude Code data directory |
+| `DATA_DIR` | `$CLAUDE_DIR/tracker` | SQLite database location |
+| `PORT` | `3001` | Server port |
 
-The frontend is always on `5173`; the server is on `3001`. Both ports are published by docker-compose.
+## Development
 
-## Roadmap
+```bash
+# Run tests
+pnpm test
 
-See [TODO.md](./TODO.md) for post-MVP features: full log viewer, tool call audit, file change timeline, settings editor, CLAUDE.md management, and multi-agent support.
+# Type check
+pnpm typecheck
+
+# Lint
+pnpm lint
+```
+
+## API Endpoints
+
+| Method | Endpoint | Description |
+|--------|----------|-------------|
+| GET | `/api/projects` | List all projects |
+| GET | `/api/sessions?projectId=&tag=` | List sessions with optional filters |
+| GET | `/api/sessions/:id` | Session detail |
+| GET | `/api/sessions/:id/raw?offset=&limit=` | Raw JSONL lines |
+| GET | `/api/sessions/compare?a=&b=` | Compare two sessions |
+| GET | `/api/search?q=&projectId=` | Full-text search |
+| GET | `/api/tags` | All tags |
+| GET/POST/DELETE | `/api/sessions/:id/tags` | Session tags |
+| GET/POST/PUT/DELETE | `/api/prompts` | Prompt library |
+| GET/PUT | `/api/config/settings` | settings.json |
+| GET/PUT | `/api/config/claude-md` | CLAUDE.md files |
+| GET/PUT/DELETE | `/api/config/mcp/:name` | MCP servers |
+| GET/PUT | `/api/config/hooks/:name` | Hook scripts |
+| GET | `/api/events` | SSE stream |
