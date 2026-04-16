@@ -18,6 +18,7 @@ interface RawUserRecord {
   uuid: string;
   parentUuid: string | null;
   isSidechain: boolean;
+  isMeta?: boolean;
   timestamp: string;
   slug?: string;
   cwd?: string;
@@ -143,6 +144,22 @@ function extractUserText(content: string | ContentBlock[]): string {
     }
   }
   return textParts.join('\n');
+}
+
+// CLI wraps slash commands and caveats in XML-like tags. Not all are flagged
+// with isMeta, so we pattern-match to keep these out of titles and turn counts.
+const CLI_WRAPPER_PATTERNS = [
+  /^<local-command-caveat>/,
+  /^<local-command-stdout>/,
+  /^<local-command-stderr>/,
+  /^<command-name>/,
+  /^<command-message>/,
+  /^<command-args>/,
+];
+
+function isCliWrapper(text: string): boolean {
+  const trimmed = text.trimStart();
+  return CLI_WRAPPER_PATTERNS.some(p => p.test(trimmed));
 }
 
 async function readLines(filePath: string): Promise<string[]> {
@@ -303,7 +320,7 @@ export async function parseSession(filePath: string, projectId: string): Promise
 
     if (raw.type === 'user') {
       const rec = raw as unknown as RawUserRecord;
-      if (rec.isSidechain) continue;
+      if (rec.isSidechain || rec.isMeta) continue;
 
       if (!firstTimestamp) firstTimestamp = rec.timestamp;
       lastTimestamp = rec.timestamp;
@@ -315,8 +332,11 @@ export async function parseSession(filePath: string, projectId: string): Promise
 
       const userText = extractUserText(rec.message.content);
       const hasRealText = userText.trim().length > 0;
+      // Slash-command/caveat wrappers emitted by the CLI look like real user
+      // text but aren't what the user typed. Skip them for title + turn count.
+      const isWrapper = hasRealText && isCliWrapper(userText);
 
-      if (hasRealText) {
+      if (hasRealText && !isWrapper) {
         if (turnCount === 0) {
           title = truncate(userText, TITLE_MAX_LEN);
         }
