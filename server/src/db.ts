@@ -3,6 +3,8 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Session } from './types.ts';
 
+const SCHEMA_VERSION = 2;
+
 export interface SearchResult {
   sessionId: string;
   projectId: string;
@@ -68,6 +70,48 @@ export class TrackerDB {
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
       );
     `);
+  }
+
+  currentSchemaVersion(): number {
+    const row = this.db
+      .prepare('SELECT version FROM schema_version LIMIT 1')
+      .get() as { version: number } | undefined;
+    return row?.version ?? 0;
+  }
+
+  markSchemaVersion(version: number): void {
+    this.db.exec('DELETE FROM schema_version');
+    this.db
+      .prepare('INSERT INTO schema_version (version) VALUES (?)')
+      .run(version);
+  }
+
+  /**
+   * If the stored schema version doesn't match the current one, drop and
+   * recreate the FTS table. Caller is responsible for re-indexing sessions
+   * after this returns.
+   * Returns true if the FTS was rebuilt.
+   */
+  maybeRebuildFts(): boolean {
+    const stored = this.currentSchemaVersion();
+    if (stored === SCHEMA_VERSION) return false;
+
+    console.log(
+      `[db] schema version ${stored} -> ${SCHEMA_VERSION}; `
+      + 'rebuilding FTS index',
+    );
+    this.db.exec('DROP TABLE IF EXISTS session_fts');
+    this.db.exec(`
+      CREATE VIRTUAL TABLE session_fts USING fts5(
+        session_id,
+        project_id,
+        title,
+        content,
+        tokenize='porter unicode61'
+      );
+    `);
+    this.markSchemaVersion(SCHEMA_VERSION);
+    return true;
   }
 
   close(): void {

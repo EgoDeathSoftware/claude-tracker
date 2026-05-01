@@ -41,6 +41,13 @@ export class SessionRegistry extends EventEmitter {
       }
     }
 
+    if (this.db && this.db.maybeRebuildFts()) {
+      for (const session of this.sessions.values()) {
+        if (session.isSubagent) continue;
+        this.db.indexSession(session);
+      }
+    }
+
     for (const w of this.watchers) {
       w.on('session-created', (s: Session) => {
         this.ingest(s);
