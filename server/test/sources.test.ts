@@ -1,4 +1,4 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import { describe, it, expect, afterEach, vi } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -65,9 +65,20 @@ describe('loadSources', () => {
         ],
       }),
     );
-    const out = await loadSources(cfg, undefined);
-    expect(out).toHaveLength(1);
-    expect(out[0]!.id).toBe('ok');
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const out = await loadSources(cfg, undefined);
+      expect(out).toHaveLength(1);
+      expect(out[0]!.id).toBe('ok');
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('gone'),
+      );
+      expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('/definitely/not/here'),
+      );
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('throws on duplicate ids', async () => {
@@ -121,5 +132,14 @@ describe('loadSources', () => {
     await writeFile(cfg, JSON.stringify({ sources: 'nope' }));
     await expect(loadSources(cfg, undefined))
       .rejects.toThrow(/expected "sources" array/);
+  });
+
+  it('throws when the config root is null', async () => {
+    const dir = await makeTmp();
+    cleanup.push(dir);
+    const cfg = join(dir, 'sources.json');
+    await writeFile(cfg, 'null');
+    await expect(loadSources(cfg, undefined))
+      .rejects.toThrow(/config root must be an object/);
   });
 });

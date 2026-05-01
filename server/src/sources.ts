@@ -15,8 +15,17 @@ export async function loadSources(
   const raw = await readFile(configPath, 'utf-8').catch(() => null);
 
   if (raw === null) {
-    const fallback = envClaudeDir
-      ?? `${process.env['HOME'] ?? ''}/.claude`;
+    const fallback = envClaudeDir ?? (
+      process.env['HOME']
+        ? `${process.env['HOME']}/.claude`
+        : null
+    );
+    if (fallback === null) {
+      throw new Error(
+        `[sources] ${configPath} not found and no fallback available `
+        + `(set CLAUDE_DIR env var or create the config file)`,
+      );
+    }
     console.log(
       `[sources] ${configPath} not found; `
       + `using single source: ${fallback}`,
@@ -30,6 +39,13 @@ export async function loadSources(
   } catch (err) {
     const msg = err instanceof Error ? err.message : String(err);
     throw new Error(`[sources] malformed JSON in ${configPath}: ${msg}`);
+  }
+
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    throw new Error(
+      `[sources] config root must be an object with a "sources" array `
+      + `in ${configPath}`,
+    );
   }
 
   const list = (parsed as { sources?: unknown }).sources;
