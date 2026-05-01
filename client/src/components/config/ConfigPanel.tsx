@@ -3,6 +3,7 @@ import { SettingsEditor } from '@/components/config/SettingsEditor.tsx';
 import { ClaudeMdEditor } from '@/components/config/ClaudeMdEditor.tsx';
 import { McpManager } from '@/components/config/McpManager.tsx';
 import { HooksManager } from '@/components/config/HooksManager.tsx';
+import { useSources } from '@/hooks/useSources.ts';
 
 const CONFIG_TABS = [
   { id: 'settings', label: 'Settings' },
@@ -15,12 +16,21 @@ type ConfigTab = (typeof CONFIG_TABS)[number]['id'];
 
 export function ConfigPanel() {
   const [activeTab, setActiveTab] = useState<ConfigTab>('settings');
+  const sources = useSources();
+  const primary = sources[0];
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200">
-        <div className="text-sm font-semibold text-gray-900">
-          Configuration
+        <div className="flex items-center">
+          <div className="text-sm font-semibold text-gray-900">
+            Configuration
+          </div>
+          {primary && (
+            <span className="ml-2 text-[10px] font-normal text-gray-500">
+              Editing: {primary.name}
+            </span>
+          )}
         </div>
         <div className="text-xs text-gray-400 mt-0.5">
           Manage Claude Code settings, instructions, MCP servers,

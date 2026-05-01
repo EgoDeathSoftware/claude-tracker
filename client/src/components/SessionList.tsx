@@ -4,6 +4,7 @@ import { SearchBar } from '@/components/SearchBar.tsx';
 import { formatRelative } from '@/lib/format.ts';
 import { useSearch } from '@/hooks/useSearch.ts';
 import { useAllTags } from '@/hooks/useTags.ts';
+import { useSources } from '@/hooks/useSources.ts';
 import type { Session } from '@/types.ts';
 
 interface Props {
@@ -27,6 +28,8 @@ export function SessionList({
 }: Props) {
   const { results, loading, search, clear } = useSearch(projectId);
   const allTags = useAllTags();
+  const sources = useSources();
+  const sourceNameById = new Map(sources.map(s => [s.id, s.name]));
   const [filterTag, setFilterTag] = useState<string | null>(null);
 
   const displayed = filterTag
@@ -107,7 +110,16 @@ export function SessionList({
             }`}
           >
             <div className="flex items-center justify-between mb-1">
-              <StatusBadge status={s.status} />
+              <div className="flex items-center gap-1.5">
+                <StatusBadge status={s.status} />
+                {sources.length > 1 && sourceNameById.has(s.sourceId) && (
+                  <span className="px-1.5 py-0.5 rounded text-[9px]
+                    font-medium bg-gray-100 text-gray-600 uppercase
+                    tracking-wide">
+                    {sourceNameById.get(s.sourceId)}
+                  </span>
+                )}
+              </div>
               <span className="text-[10px] text-gray-400">
                 {formatRelative(s.lastActivityAt)}
               </span>
