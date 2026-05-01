@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
-import type { SessionWatcher } from './watcher.ts';
+import type { SessionRegistry } from './registry.ts';
 import type { TrackerDB } from './db.ts';
 import { readRawLines } from './parser.js';
 import {
@@ -18,23 +18,32 @@ import {
 import type { SettingsJson, McpServer } from './config.js';
 
 export function buildApp(
-  watcher: SessionWatcher,
+  registry: SessionRegistry,
   db: TrackerDB,
-  claudeDir: string,
 ): Hono {
   const app = new Hono();
-  const homeDir = claudeDir.replace(/\/\.claude$/, '');
+  const sources = registry.getSources();
+  const primarySource = sources[0];
+  if (!primarySource) {
+    console.warn(
+      '[routes] no sources configured — config management endpoints will 503',
+    );
+  }
+  const primaryClaudeDir = primarySource?.path ?? '';
+  const primaryHomeDir = primaryClaudeDir.replace(/\/\.claude$/, '');
 
   app.use('*', cors({ origin: 'http://localhost:5173' }));
 
   // --- Projects & Sessions ---
 
-  app.get('/api/projects', c => c.json(watcher.getProjects()));
+  app.get('/api/projects', c => c.json(registry.getProjects()));
+
+  app.get('/api/sources', c => c.json(registry.getSources()));
 
   app.get('/api/sessions', c => {
     const projectId = c.req.query('projectId');
     const tag = c.req.query('tag');
-    let sessions = watcher.getSessions(projectId);
+    let sessions = registry.getSessions(projectId);
     if (tag) {
       const tagSessionIds = new Set(db.getSessionsByTag(tag));
       sessions = sessions.filter(s => tagSessionIds.has(s.id));
@@ -43,13 +52,13 @@ export function buildApp(
   });
 
   app.get('/api/sessions/:id', c => {
-    const session = watcher.getSession(c.req.param('id'));
+    const session = registry.getSession(c.req.param('id'));
     if (!session) return c.json({ error: 'not found' }, 404);
     return c.json(session);
   });
 
   app.get('/api/sessions/:id/raw', async c => {
-    const session = watcher.getSession(c.req.param('id'));
+    const session = registry.getSession(c.req.param('id'));
     if (!session) return c.json({ error: 'not found' }, 404);
     const offset = Number(c.req.query('offset') ?? '0');
     const limit = Math.min(Number(c.req.query('limit') ?? '200'), 500);
@@ -129,8 +138,8 @@ export function buildApp(
     if (!aId || !bId) {
       return c.json({ error: 'a and b session IDs required' }, 400);
     }
-    const a = watcher.getSession(aId);
-    const b = watcher.getSession(bId);
+    const a = registry.getSession(aId);
+    const b = registry.getSession(bId);
     if (!a || !b) return c.json({ error: 'session not found' }, 404);
 
     return c.json({
@@ -142,19 +151,19 @@ export function buildApp(
   // --- Config: settings.json ---
 
   app.get('/api/config/settings', async c => {
-    return c.json(await readSettings(claudeDir));
+    return c.json(await readSettings(primaryClaudeDir));
   });
 
   app.put('/api/config/settings', async c => {
     const body = await c.req.json<SettingsJson>();
-    await writeSettings(claudeDir, body);
+    await writeSettings(primaryClaudeDir, body);
     return c.json({ ok: true });
   });
 
   // --- Config: CLAUDE.md files ---
 
   app.get('/api/config/claude-md', async c => {
-    return c.json(await listClaudeMdFiles(claudeDir));
+    return c.json(await listClaudeMdFiles(primaryClaudeDir));
   });
 
   app.get('/api/config/claude-md/read', async c => {
@@ -179,34 +188,34 @@ export function buildApp(
   // --- Config: MCP servers ---
 
   app.get('/api/config/mcp', async c => {
-    const data = await readClaudeJson(homeDir);
+    const data = await readClaudeJson(primaryHomeDir);
     return c.json(data.mcpServers ?? {});
   });
 
   app.put('/api/config/mcp/:name', async c => {
     const name = c.req.param('name');
     const server = await c.req.json<McpServer>();
-    const data = await readClaudeJson(homeDir);
+    const data = await readClaudeJson(primaryHomeDir);
     if (!data.mcpServers) data.mcpServers = {};
     data.mcpServers[name] = server;
-    await writeClaudeJson(homeDir, data);
+    await writeClaudeJson(primaryHomeDir, data);
     return c.json({ ok: true });
   });
 
   app.delete('/api/config/mcp/:name', async c => {
     const name = c.req.param('name');
-    const data = await readClaudeJson(homeDir);
+    const data = await readClaudeJson(primaryHomeDir);
     if (data.mcpServers) {
       delete data.mcpServers[name];
     }
-    await writeClaudeJson(homeDir, data);
+    await writeClaudeJson(primaryHomeDir, data);
     return c.json({ ok: true });
   });
 
   // --- Config: Hook scripts ---
 
   app.get('/api/config/hooks', async c => {
-    return c.json(await listHookScripts(claudeDir));
+    return c.json(await listHookScripts(primaryClaudeDir));
   });
 
   app.put('/api/config/hooks/:name', async c => {
@@ -215,7 +224,7 @@ export function buildApp(
     if (body.content === undefined) {
       return c.json({ error: 'content required' }, 400);
     }
-    await writeHookScript(claudeDir, name, body.content);
+    await writeHookScript(primaryClaudeDir, name, body.content);
     return c.json({ ok: true });
   });
 
@@ -236,8 +245,8 @@ export function buildApp(
         });
       };
 
-      watcher.on('session-created', onCreate);
-      watcher.on('session-updated', onUpdate);
+      registry.on('session-created', onCreate);
+      registry.on('session-updated', onUpdate);
 
       const interval = setInterval(() => {
         void stream.writeSSE({ data: 'ping' });
@@ -246,8 +255,8 @@ export function buildApp(
       await new Promise<void>(resolve => {
         stream.onAbort(() => {
           clearInterval(interval);
-          watcher.off('session-created', onCreate);
-          watcher.off('session-updated', onUpdate);
+          registry.off('session-created', onCreate);
+          registry.off('session-updated', onUpdate);
           resolve();
         });
       });
