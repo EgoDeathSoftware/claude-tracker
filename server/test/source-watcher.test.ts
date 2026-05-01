@@ -2,7 +2,7 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { writeFile, mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { SessionWatcher } from '../src/watcher.ts';
+import { SourceWatcher } from '../src/source-watcher.ts';
 
 function makeUserLine(uuid: string, content: string, ts: string): string {
   return JSON.stringify({
@@ -28,7 +28,7 @@ function makeAssistantLine(
   });
 }
 
-describe('SessionWatcher subagent support', () => {
+describe('SourceWatcher subagent support', () => {
   let cleanupDir: string | null = null;
 
   afterEach(async () => {
@@ -63,12 +63,12 @@ describe('SessionWatcher subagent support', () => {
     ].join('\n');
     await writeFile(join(subagentDir, 'agent-abc.jsonl'), subContent);
 
-    const watcher = new SessionWatcher(claudeDir);
+    const watcher = new SourceWatcher('test-source', claudeDir);
     await watcher.start();
 
     try {
-      // Subagents should be filtered from getSessions
-      const sessions = watcher.getSessions();
+      // Subagents should be filtered from getAllSessions
+      const sessions = watcher.getAllSessions().filter(s => !s.isSubagent);
       expect(sessions).toHaveLength(1);
       expect(sessions[0]!.isSubagent).toBe(false);
 
@@ -79,16 +79,19 @@ describe('SessionWatcher subagent support', () => {
       expect(parent.subagents[0]!.subagentType).toBe('Explore');
       expect(parent.subagents[0]!.turnCount).toBe(1);
 
-      // Subagent should exist via getSession()
-      const sub = watcher.getSession(parent.subagents[0]!.sessionId);
+      // Subagent should exist in the session map
+      const sub = watcher.getAllSessions().find(
+        s => s.id === parent.subagents[0]!.sessionId,
+      );
       expect(sub).toBeDefined();
       expect(sub!.isSubagent).toBe(true);
       expect(sub!.parentSessionId).toBe('parent-sess');
 
-      // Projects should not count subagents
-      const projects = watcher.getProjects();
-      expect(projects).toHaveLength(1);
-      expect(projects[0]!.sessionCount).toBe(1);
+      // Project aggregation is tested at the registry level in registry.test.ts;
+      // here we just verify subagents are in the raw session map.
+      const all = watcher.getAllSessions();
+      expect(all.filter(s => !s.isSubagent)).toHaveLength(1);
+      expect(all.filter(s => s.isSubagent)).toHaveLength(1);
     } finally {
       await watcher.stop();
     }
@@ -112,18 +115,19 @@ describe('SessionWatcher subagent support', () => {
     await mkdir(subDir, { recursive: true });
     await writeFile(join(subDir, 'agent-x.jsonl'), content);
 
-    const watcher = new SessionWatcher(claudeDir);
+    const watcher = new SourceWatcher('test-source', claudeDir);
     await watcher.start();
 
     try {
-      // Both should have projectId = '-my-project'
-      const all = watcher.getSessions();
-      expect(all).toHaveLength(1); // subagent filtered
-      expect(all[0]!.projectId).toBe('default:-my-project');
+      // Both should have projectId = 'test-source:-my-project'
+      const all = watcher.getAllSessions();
+      const nonSub = all.filter(s => !s.isSubagent);
+      expect(nonSub).toHaveLength(1);
+      expect(nonSub[0]!.projectId).toBe('test-source:-my-project');
 
       // Subagent too
-      const sub = watcher.getSession('agent-x');
-      expect(sub?.projectId).toBe('default:-my-project');
+      const sub = all.find(s => s.id === 'agent-x');
+      expect(sub?.projectId).toBe('test-source:-my-project');
     } finally {
       await watcher.stop();
     }
