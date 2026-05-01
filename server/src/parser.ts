@@ -3,6 +3,7 @@ import { stat } from 'node:fs/promises';
 import { createInterface } from 'node:readline';
 import { basename, dirname } from 'node:path';
 import { computeCost } from './pricing.js';
+import { deriveProjectKey } from './project-key.js';
 import type {
   Session, SessionMessage, SessionStatus, ContentBlock,
   MessageUsage, RawLogEntry, ToolCallEntry, FileChangeEntry,
@@ -236,7 +237,11 @@ function detectParentSessionId(filePath: string): string | undefined {
   return undefined;
 }
 
-export async function parseSession(filePath: string, projectId: string): Promise<Session> {
+export async function parseSession(
+  filePath: string,
+  sourceId: string,
+  dirName: string,
+): Promise<Session> {
   const [lines, fileStat] = await Promise.all([readLines(filePath), stat(filePath)]);
 
   const messages: SessionMessage[] = [];
@@ -431,9 +436,11 @@ export async function parseSession(filePath: string, projectId: string): Promise
     : 0;
 
   const parentSessionId = detectParentSessionId(filePath);
+  const projectId = deriveProjectKey(cwd, sourceId, dirName);
 
   return {
     id: sessionId,
+    sourceId,
     projectId,
     filePath,
     slug,

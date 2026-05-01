@@ -7,50 +7,52 @@ import { parseSession, readRawLines } from '../src/parser.ts';
 const FIXTURE = join(import.meta.dirname, 'fixtures/sample.jsonl');
 
 describe('parseSession', () => {
-  it('returns a Session with correct id and projectId', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+  it('returns a Session with correct id and projectId derived from cwd basename', async () => {
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.id).toBe('abc-123');
-    expect(session.projectId).toBe('proj-1');
+    // projectId is now derived from basename(cwd), lowercased
+    expect(session.projectId).toBe('my-project');
+    expect(session.sourceId).toBe('test-source');
   });
 
   it('derives title from first non-sidechain user message', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.title).toBe('Fix the login bug');
   });
 
   it('sets slug from first user record', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.slug).toBe('test-session');
   });
 
   it('counts only non-sidechain user messages as turns', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.turnCount).toBe(1);
   });
 
   it('computes cost from usage', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     // 10 input × 3/1e6 + 20 output × 15/1e6 = 0.00033
     expect(session.costUsd).toBeCloseTo(0.00033, 5);
   });
 
   it('sets model from last assistant message', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.model).toBe('claude-sonnet-4-6');
   });
 
   it('includes only user and assistant messages (no attachments, no sidechains)', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.messages).toHaveLength(2);
   });
 
   it('sets cwd from first user record', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.cwd).toBe('/home/user/my-project');
   });
 
   it('computes durationMs from first to last timestamp', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.durationMs).toBe(5000);
   });
 });
@@ -61,7 +63,7 @@ describe('parseSession edge cases', () => {
     const file = join(dir, 'empty.jsonl');
     await writeFile(file, '');
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.messages).toHaveLength(0);
       expect(session.turnCount).toBe(0);
       expect(session.title).toBe('(untitled)');
@@ -82,7 +84,7 @@ describe('parseSession edge cases', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.messages).toHaveLength(2);
       expect(session.title).toBe('Hello');
     } finally {
@@ -98,7 +100,7 @@ describe('parseSession edge cases', () => {
     const tenMinutesAgo = new Date(Date.now() - 10 * 60_000);
     await utimes(file, tenMinutesAgo, tenMinutesAgo);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.status).toBe('done');
     } finally {
       await rm(dir, { recursive: true });
@@ -110,7 +112,7 @@ describe('parseSession edge cases', () => {
     const file = join(dir, 'fresh.jsonl');
     await writeFile(file, '{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"timestamp":"2026-04-01T10:00:00.000Z","message":{"role":"user","content":"fresh"}}\n');
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.status).toBe('live');
     } finally {
       await rm(dir, { recursive: true });
@@ -127,7 +129,7 @@ describe('parseSession edge cases', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       // Title should come from first user text message, not the tool result
       expect(session.title).toBe('hello');
       expect(typeof session.title).toBe('string');
@@ -153,7 +155,7 @@ describe('parseSession edge cases', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.title).toBe('now lets debug the bug');
       expect(session.turnCount).toBe(1);
     } finally {
@@ -175,7 +177,7 @@ describe('parseSession edge cases', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       // Title must come from the real user message, not from the CLI-injected meta records
       expect(session.title).toBe('what is the current status');
       // Only one real user turn (the meta records do not count)
@@ -191,7 +193,7 @@ describe('parseSession edge cases', () => {
 
 describe('logEntries', () => {
   it('captures all record types from sample fixture', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     // sample.jsonl has: permission-mode, user, assistant, sidechain user, attachment
     expect(session.logEntries.length).toBeGreaterThanOrEqual(4);
     const types = session.logEntries.map(e => e.type);
@@ -202,7 +204,7 @@ describe('logEntries', () => {
   });
 
   it('includes line numbers starting at 1', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.logEntries[0]?.lineNumber).toBe(1);
     const lineNums = session.logEntries.map(e => e.lineNumber);
     for (let i = 1; i < lineNums.length; i++) {
@@ -211,7 +213,7 @@ describe('logEntries', () => {
   });
 
   it('generates summaries for each record type', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     for (const entry of session.logEntries) {
       expect(entry.summary.length).toBeGreaterThan(0);
     }
@@ -231,7 +233,7 @@ describe('logEntries', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.logEntries).toHaveLength(5);
 
       const progress = session.logEntries.find(e => e.type === 'progress');
@@ -282,7 +284,7 @@ describe('toolCalls extraction', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.toolCalls).toHaveLength(1);
       const tc = session.toolCalls[0]!;
       expect(tc.toolName).toBe('Bash');
@@ -304,7 +306,7 @@ describe('toolCalls extraction', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.toolCalls).toHaveLength(2);
       expect(session.toolCalls[0]!.toolName).toBe('Read');
       expect(session.toolCalls[1]!.toolName).toBe('Read');
@@ -327,7 +329,7 @@ describe('fileChanges extraction', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.fileChanges).toHaveLength(3);
       expect(session.fileChanges[0]).toEqual(
         expect.objectContaining({ filePath: '/src/app.ts', operation: 'read' }),
@@ -352,7 +354,7 @@ describe('fileChanges extraction', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.fileChanges).toHaveLength(0);
     } finally {
       await rm(dir, { recursive: true });
@@ -371,7 +373,7 @@ describe('costBreakdown', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       const cb = session.costBreakdown;
       expect(cb.totalCost).toBeCloseTo(session.costUsd, 8);
       expect(cb.toolCost).toBeGreaterThan(0);
@@ -389,7 +391,7 @@ describe('costBreakdown', () => {
     const file = join(dir, 'no-cost.jsonl');
     await writeFile(file, '{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"timestamp":"2026-04-01T10:00:00.000Z","message":{"role":"user","content":"hi"}}\n');
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.costBreakdown.totalCost).toBe(0);
       expect(session.costBreakdown.toolCost).toBe(0);
       expect(session.costBreakdown.conversationCost).toBe(0);
@@ -411,7 +413,7 @@ describe('hookEvents extraction', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.hookEvents).toHaveLength(2);
       expect(session.hookEvents[0]!.hookEvent).toBe('PreToolUse');
       expect(session.hookEvents[0]!.hookName).toBe('check-lint');
@@ -433,7 +435,7 @@ describe('hookEvents extraction', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.hookEvents).toHaveLength(1);
       expect(session.hookEvents[0]!.toolName).toBe('Bash');
     } finally {
@@ -444,7 +446,7 @@ describe('hookEvents extraction', () => {
 
 describe('permissionEvents extraction', () => {
   it('extracts permission-mode records', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     const modeEvents = session.permissionEvents.filter(e => e.type === 'mode-set');
     expect(modeEvents.length).toBeGreaterThanOrEqual(1);
     expect(modeEvents[0]!.detail).toContain('default');
@@ -461,7 +463,7 @@ describe('permissionEvents extraction', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.permissionEvents).toHaveLength(3);
 
       const modeSet = session.permissionEvents.find(e => e.type === 'mode-set');
@@ -486,7 +488,7 @@ describe('permissionEvents extraction', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.hookEvents).toHaveLength(0);
       expect(session.permissionEvents).toHaveLength(0);
     } finally {
@@ -497,7 +499,7 @@ describe('permissionEvents extraction', () => {
 
 describe('subagent detection', () => {
   it('sets isSubagent=false and parentSessionId=undefined for top-level files', async () => {
-    const session = await parseSession(FIXTURE, 'proj-1');
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
     expect(session.isSubagent).toBe(false);
     expect(session.parentSessionId).toBeUndefined();
     expect(session.subagents).toHaveLength(0);
@@ -514,7 +516,7 @@ describe('subagent detection', () => {
     ].join('\n');
     await writeFile(file, content);
     try {
-      const session = await parseSession(file, 'proj-1');
+      const session = await parseSession(file, 'test-source', 'proj-1');
       expect(session.isSubagent).toBe(true);
       expect(session.parentSessionId).toBe('parent-session-123');
     } finally {

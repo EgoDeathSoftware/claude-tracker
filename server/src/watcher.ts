@@ -83,7 +83,7 @@ export class SessionWatcher extends EventEmitter {
     projectId: string,
   ): Promise<void> {
     try {
-      const session = await parseSession(filePath, projectId);
+      const session = await parseSession(filePath, 'default', projectId);
       this.sessions.set(session.id, session);
       if (this.db && !session.isSubagent) {
         this.db.indexSession(session);
@@ -168,7 +168,7 @@ export class SessionWatcher extends EventEmitter {
     eventName: 'session-created' | 'session-updated',
   ): Promise<void> {
     const projectId = this.projectIdFromPath(filePath);
-    const session = await parseSession(filePath, projectId).catch(err => {
+    const session = await parseSession(filePath, 'default', projectId).catch(err => {
       console.error(
         `[watcher] Failed to parse ${filePath}:`,
         err instanceof Error ? err.message : err,
@@ -199,6 +199,7 @@ export class SessionWatcher extends EventEmitter {
           sessionCount: 1,
           liveCount: session.status === 'live' ? 1 : 0,
           lastActivityAt: session.lastActivityAt,
+          sources: [session.sourceId],
         });
       } else {
         existing.sessionCount++;

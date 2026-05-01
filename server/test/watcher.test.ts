@@ -119,11 +119,11 @@ describe('SessionWatcher subagent support', () => {
       // Both should have projectId = '-my-project'
       const all = watcher.getSessions();
       expect(all).toHaveLength(1); // subagent filtered
-      expect(all[0]!.projectId).toBe('-my-project');
+      expect(all[0]!.projectId).toBe('default:-my-project');
 
       // Subagent too
       const sub = watcher.getSession('agent-x');
-      expect(sub?.projectId).toBe('-my-project');
+      expect(sub?.projectId).toBe('default:-my-project');
     } finally {
       await watcher.stop();
     }

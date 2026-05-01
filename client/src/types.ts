@@ -93,6 +93,7 @@ export interface SubagentInfo {
 
 export interface Session {
   id: string;
+  sourceId: string;
   projectId: string;
   filePath: string;
   slug: string;
@@ -124,6 +125,7 @@ export interface Project {
   sessionCount: number;
   liveCount: number;
   lastActivityAt: string;
+  sources: string[];
 }
 
 // --- Search, Tags, Prompts ---
