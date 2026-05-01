@@ -9,6 +9,12 @@ Monorepo with two pnpm workspace packages:
 
 Shared TypeScript strict mode settings in `tsconfig.base.json`. Each package has its own `tsconfig.json`.
 
+## Multi-source setup
+
+The tracker can watch multiple `.claude` directories (e.g. WSL and Windows on the same host). Copy `server/config/sources.example.json` to `server/config/sources.json` and edit the paths to match your setup. Sessions for the same folder basename (case-insensitive) merge into one project regardless of which source recorded them.
+
+Without a `sources.json`, the tracker falls back to the `CLAUDE_DIR` env var (or `~/.claude`) as a single source.
+
 ## Key Conventions
 
 - TypeScript strict mode with `exactOptionalPropertyTypes` — optional props must include `| undefined` (e.g., `foo?: string | undefined`)

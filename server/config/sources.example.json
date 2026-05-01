@@ -1,0 +1,14 @@
+{
+  "sources": [
+    {
+      "id": "wsl",
+      "name": "WSL",
+      "path": "/home/YOURUSER/.claude"
+    },
+    {
+      "id": "windows",
+      "name": "Windows",
+      "path": "/mnt/c/Users/YOURUSER/.claude"
+    }
+  ]
+}
