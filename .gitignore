@@ -4,3 +4,6 @@ dist/
 .superpowers/
 .worktrees/
 .pnpm-store/
+
+# Multi-source tracker config
+server/config/sources.json
