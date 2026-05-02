@@ -41,24 +41,34 @@ cd client && npx tsc --noEmit --allowImportingTsExtensions  # Client typecheck
 
 ## File Layout
 
-- `server/src/parser.ts` — Core JSONL parsing. Extracts messages, tool calls, file changes, hooks, permissions, subagents.
-- `server/src/watcher.ts` — Chokidar file watcher + in-memory session index. Emits SSE events.
-- `server/src/db.ts` — SQLite with better-sqlite3. FTS5 search, tags, prompts.
+- `server/src/parser.ts` — Core JSONL parsing. Extracts messages, tool calls, file changes, hooks, permissions, subagents. `parseSession(filePath, sourceId, dirName)` derives `projectId` via `deriveProjectKey(cwd, sourceId, dirName)`.
+- `server/src/project-key.ts` — Pure utilities for project identity: `basenameOf`, `deriveProjectKey` (lowercased basename of cwd, or `<sourceId>:<dirName>` fallback), `displayNameFromCwd` (casing-preserving display name).
+- `server/src/sources.ts` — Loads `server/config/sources.json` (with `CLAUDE_DIR` env-var fallback), validates entries, skips unreachable paths. Exports `Source` interface.
+- `server/src/source-watcher.ts` — Per-source `SourceWatcher` class. One instance per configured `.claude` directory. Scans existing JSONL files, watches via chokidar, links subagents within the source, tags every parsed `Session` with its `sourceId`.
+- `server/src/registry.ts` — `SessionRegistry` aggregator. Owns one `SourceWatcher` per source, ingests their sessions into a unified map, groups projects by basename slug across sources, handles session-id collisions, re-emits SSE events.
+- `server/src/db.ts` — SQLite with better-sqlite3. FTS5 search, tags, prompts. `SCHEMA_VERSION` + `maybeRebuildFts()` runs on construction; rebuilds the FTS table on schema bump.
 - `server/src/config.ts` — Read/write for settings.json, .claude.json, CLAUDE.md, hook scripts.
-- `server/src/routes.ts` — All API endpoints. `buildApp(watcher, db, claudeDir)`.
+- `server/src/routes.ts` — All API endpoints. `buildApp(registry, db)`. Config-management routes (`/api/config/*`) target the first configured source and 503 when no source exists. Includes `GET /api/sources`.
+- `server/src/index.ts` — Server entrypoint. Loads sources via `loadSources`, starts `SessionRegistry`, starts Hono server.
 - `server/src/pricing.ts` — Model pricing table and cost computation.
 - `client/src/App.tsx` — Root component. Manages project/session selection, config mode, compare mode.
+- `client/src/hooks/useSources.ts` — Fetches `/api/sources` once on mount; consumed by `SessionList` (per-session badge) and `ConfigPanel` (active-source label).
+- `client/src/components/SessionList.tsx` — Renders a small source badge next to each session when more than one source is configured.
 - `client/src/components/SessionDetail.tsx` — 7-tab detail view (Conversation, Tools, Files, Costs, Hooks, Agents, Raw Log).
-- `client/src/components/config/ConfigPanel.tsx` — 4-tab config editor (Settings, CLAUDE.md, MCP, Hooks).
+- `client/src/components/config/ConfigPanel.tsx` — 4-tab config editor (Settings, CLAUDE.md, MCP, Hooks). Header shows "Editing: \<source name\>".
 
 ## Testing
 
-Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest run`.
+Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest run`. Total: 67 tests across 6 files.
 
-- `parser.test.ts` — 34 tests covering all JSONL record types, tool extraction, file changes, hooks, permissions, subagents, raw lines
-- `watcher.test.ts` — 2 tests for subagent scanning and linking
+- `parser.test.ts` — 36 tests covering all JSONL record types, tool extraction, file changes, hooks, permissions, subagents, raw lines.
+- `project-key.test.ts` — 13 tests for path basename extraction, cross-platform merging, and fallback behavior.
+- `sources.test.ts` — 8 tests for the config loader: happy path, env-var fallback, unreachable-source skip, duplicate ids, invalid ids, malformed JSON, non-array roots, null root.
+- `source-watcher.test.ts` — 2 tests for per-source subagent scanning and linking.
+- `registry.test.ts` — 5 tests for cross-source merging, single-source grouping, no-cwd fallback, case-insensitive basenames, and unreachable-source resilience.
+- `multi-source.integration.test.ts` — 3 tests using committed fixtures under `server/test/fixtures/sources/{wsl,windows}/` to exercise end-to-end merge of WSL + Windows sessions.
 
-Test files use relative imports (`../src/parser.js`) which is necessary for NodeNext module resolution. A pre-tool hook blocks relative imports in source files but test files require them.
+Test files use relative imports (`../src/parser.ts`) which is necessary for NodeNext module resolution. A pre-tool hook blocks relative imports in source files but test files require them.
 
 ## Important Notes
 

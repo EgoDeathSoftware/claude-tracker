@@ -35,6 +35,9 @@ export class TrackerDB {
     this.db.pragma('journal_mode = WAL');
     this.db.pragma('foreign_keys = ON');
     this.migrate();
+    // Rebuild FTS if the schema version changed. Done eagerly here so any
+    // subsequent indexSession() calls write into the up-to-date table.
+    this.maybeRebuildFts();
   }
 
   private migrate(): void {

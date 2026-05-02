@@ -148,6 +148,18 @@ export function buildApp(
     });
   });
 
+  // --- Config: gate all /api/config/* routes on a primary source ---
+
+  app.use('/api/config/*', async (c, next) => {
+    if (!primarySource) {
+      return c.json(
+        { error: 'no source configured; cannot manage config' },
+        503,
+      );
+    }
+    await next();
+  });
+
   // --- Config: settings.json ---
 
   app.get('/api/config/settings', async c => {
