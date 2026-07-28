@@ -11,10 +11,11 @@ services:
       - ./client/index.html:/app/client/index.html
       - ./server/src:/app/server/src
       - ./server/test:/app/server/test
-      - ${CLAUDE_DIR}:/claude:ro
+      - ./server/config:/app/server/config
+      - ${CLAUDE_DIR_WINDOWS}:/claude/windows:ro
+      - ${CLAUDE_DIR_WSL}:/claude/wsl:ro
       - tracker-data:/app/data
     environment:
-      - CLAUDE_DIR=/claude
       - DATA_DIR=/app/data
       - PORT=3001
     restart: unless-stopped
