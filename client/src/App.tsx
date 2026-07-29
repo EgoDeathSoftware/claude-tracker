@@ -72,21 +72,13 @@ export default function App() {
             setSelectedSessionId(null);
             setConfigOpen(false);
           }}
+          configOpen={configOpen}
+          onOpenConfig={() => {
+            setConfigOpen(!configOpen);
+            if (!configOpen) setSelectedSessionId(null);
+          }}
         />
         <div className="border-t border-gray-200 p-2 space-y-1">
-          <button
-            onClick={() => {
-              setConfigOpen(!configOpen);
-              if (!configOpen) setSelectedSessionId(null);
-            }}
-            className={`w-full text-left px-3 py-1.5 text-xs rounded
-              ${configOpen
-                ? 'bg-indigo-50 text-indigo-700'
-                : 'text-gray-600 hover:bg-gray-100'
-              }`}
-          >
-            Configuration
-          </button>
           <button
             onClick={() => setPromptsOpen(true)}
             className="w-full text-left px-3 py-1.5 text-xs

@@ -16,10 +16,14 @@ import {
   writeHookScript,
 } from './config.js';
 import type { SettingsJson, McpServer } from './config.js';
+import { readLlmConfig, writeLlmConfig } from './llm-config.js';
+import type { LlmConfig } from './llm-config.js';
+import { listModels, testConnection, generateSummary } from './llm.js';
 
 export function buildApp(
   registry: SessionRegistry,
   db: TrackerDB,
+  llmConfigPath: string,
 ): Hono {
   const app = new Hono();
   const sources = registry.getSources();
@@ -54,7 +58,8 @@ export function buildApp(
   app.get('/api/sessions/:id', c => {
     const session = registry.getSession(c.req.param('id'));
     if (!session) return c.json({ error: 'not found' }, 404);
-    return c.json(session);
+    const aiSummary = db.getSessionSummary(session.id) ?? undefined;
+    return c.json({ ...session, aiSummary });
   });
 
   app.get('/api/sessions/:id/raw', async c => {
@@ -128,6 +133,60 @@ export function buildApp(
   app.delete('/api/prompts/:id', c => {
     db.deletePrompt(Number(c.req.param('id')));
     return c.json({ ok: true });
+  });
+
+  // --- AI Summaries ---
+
+  app.get('/api/llm/config', async c => {
+    const config = await readLlmConfig(llmConfigPath);
+    return c.json(config);
+  });
+
+  app.put('/api/llm/config', async c => {
+    const body = await c.req.json<LlmConfig>();
+    await writeLlmConfig(llmConfigPath, body);
+    return c.json({ ok: true });
+  });
+
+  app.get('/api/llm/models', async c => {
+    const config = await readLlmConfig(llmConfigPath);
+    try {
+      const models = await listModels(config);
+      return c.json({ models });
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        502,
+      );
+    }
+  });
+
+  app.post('/api/llm/test', async c => {
+    const config = await readLlmConfig(llmConfigPath);
+    const result = await testConnection(config);
+    return c.json(result, result.ok ? 200 : 502);
+  });
+
+  app.get('/api/sessions/:id/summary', c => {
+    const summary = db.getSessionSummary(c.req.param('id'));
+    return c.json(summary);
+  });
+
+  app.post('/api/sessions/:id/summarize', async c => {
+    const session = registry.getSession(c.req.param('id'));
+    if (!session) return c.json({ error: 'not found' }, 404);
+
+    const config = await readLlmConfig(llmConfigPath);
+    try {
+      const summary = await generateSummary(session, config);
+      db.saveSessionSummary(session.id, summary);
+      return c.json(summary);
+    } catch (err) {
+      return c.json(
+        { error: err instanceof Error ? err.message : String(err) },
+        502,
+      );
+    }
   });
 
   // --- Session Comparison ---

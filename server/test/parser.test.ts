@@ -497,6 +497,32 @@ describe('permissionEvents extraction', () => {
   });
 });
 
+describe('recaps extraction', () => {
+  it('extracts away_summary system records as recaps', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'parser-test-'));
+    const file = join(dir, 'recap.jsonl');
+    const content = [
+      '{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":false,"timestamp":"2026-04-01T10:00:00.000Z","message":{"role":"user","content":"hi"}}',
+      '{"type":"system","subtype":"away_summary","content":"You wanted X, we did Y. (disable recaps in /config)","timestamp":"2026-04-01T10:05:00.000Z","uuid":"sys1"}',
+      '{"type":"system","subtype":"turn_duration","durationMs":100,"timestamp":"2026-04-01T10:05:01.000Z","uuid":"sys2"}',
+    ].join('\n');
+    await writeFile(file, content);
+    try {
+      const session = await parseSession(file, 'test-source', 'proj-1');
+      expect(session.recaps).toHaveLength(1);
+      expect(session.recaps[0]!.content).toContain('You wanted X, we did Y');
+      expect(session.recaps[0]!.timestamp).toBe('2026-04-01T10:05:00.000Z');
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
+
+  it('returns an empty recaps array when no away_summary records exist', async () => {
+    const session = await parseSession(FIXTURE, 'test-source', 'proj-1');
+    expect(session.recaps).toEqual([]);
+  });
+});
+
 describe('subagent detection', () => {
   it('sets isSubagent=false and parentSessionId=undefined for top-level files', async () => {
     const session = await parseSession(FIXTURE, 'test-source', 'proj-1');

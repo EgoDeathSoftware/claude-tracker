@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
-import type { Session } from './types.ts';
+import type { Session, AiSummary } from './types.ts';
 
 const SCHEMA_VERSION = 2;
 
@@ -71,6 +71,15 @@ export class TrackerDB {
         content TEXT NOT NULL,
         created_at TEXT NOT NULL DEFAULT (datetime('now')),
         updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+      );
+
+      CREATE TABLE IF NOT EXISTS session_summaries (
+        session_id TEXT PRIMARY KEY,
+        content TEXT NOT NULL,
+        model TEXT NOT NULL,
+        provider TEXT NOT NULL,
+        generated_at TEXT NOT NULL DEFAULT (datetime('now')),
+        source_last_activity_at TEXT NOT NULL
       );
     `);
   }
@@ -307,5 +316,52 @@ export class TrackerDB {
 
   deletePrompt(id: number): void {
     this.db.prepare('DELETE FROM prompts WHERE id = ?').run(id);
+  }
+
+  // --- AI Summaries ---
+
+  getSessionSummary(sessionId: string): AiSummary | null {
+    const row = this.db
+      .prepare(`
+        SELECT
+          content, model, provider,
+          generated_at AS generatedAt,
+          source_last_activity_at AS sourceLastActivityAt
+        FROM session_summaries WHERE session_id = ?
+      `)
+      .get(sessionId) as AiSummary | undefined;
+    return row ?? null;
+  }
+
+  hasSessionSummary(sessionId: string): boolean {
+    return this.db
+      .prepare('SELECT 1 FROM session_summaries WHERE session_id = ?')
+      .get(sessionId) !== undefined;
+  }
+
+  saveSessionSummary(
+    sessionId: string,
+    summary: Omit<AiSummary, 'generatedAt'>,
+  ): AiSummary {
+    this.db
+      .prepare(`
+        INSERT INTO session_summaries
+          (session_id, content, model, provider, source_last_activity_at)
+        VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (session_id) DO UPDATE SET
+          content = excluded.content,
+          model = excluded.model,
+          provider = excluded.provider,
+          generated_at = datetime('now'),
+          source_last_activity_at = excluded.source_last_activity_at
+      `)
+      .run(
+        sessionId,
+        summary.content,
+        summary.model,
+        summary.provider,
+        summary.sourceLastActivityAt,
+      );
+    return this.getSessionSummary(sessionId)!;
   }
 }

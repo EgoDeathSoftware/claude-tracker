@@ -4,9 +4,12 @@ import { SessionRegistry } from './registry.js';
 import { loadSources } from './sources.js';
 import { TrackerDB } from './db.js';
 import { buildApp } from './routes.js';
+import { startAutoSummarizePoller } from './auto-summarize.js';
 
 const sourcesConfigPath = process.env['SOURCES_CONFIG']
   ?? join(process.cwd(), 'config', 'sources.json');
+const llmConfigPath = process.env['LLM_CONFIG']
+  ?? join(process.cwd(), 'config', 'llm.json');
 const dataDir = process.env['DATA_DIR']
   ?? join(process.env['HOME'] ?? '.', '.claude', 'tracker');
 const port = Number(process.env['PORT'] ?? 3001);
@@ -25,8 +28,9 @@ if (sources.length === 0) {
 const db = new TrackerDB(join(dataDir, 'tracker.db'));
 const registry = new SessionRegistry(sources, db);
 await registry.start();
+startAutoSummarizePoller(registry, db, llmConfigPath);
 
-const app = buildApp(registry, db);
+const app = buildApp(registry, db, llmConfigPath);
 serve({ fetch: app.fetch, port }, () => {
   console.log(`Claude Tracker server running on http://localhost:${port}`);
   console.log(`Sources:`);

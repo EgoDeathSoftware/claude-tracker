@@ -3,6 +3,7 @@ import { SettingsEditor } from '@/components/config/SettingsEditor.tsx';
 import { ClaudeMdEditor } from '@/components/config/ClaudeMdEditor.tsx';
 import { McpManager } from '@/components/config/McpManager.tsx';
 import { HooksManager } from '@/components/config/HooksManager.tsx';
+import { LlmConfigPanel } from '@/components/config/LlmConfigPanel.tsx';
 import { useSources } from '@/hooks/useSources.ts';
 
 const CONFIG_TABS = [
@@ -10,6 +11,7 @@ const CONFIG_TABS = [
   { id: 'claude-md', label: 'CLAUDE.md' },
   { id: 'mcp', label: 'MCP Servers' },
   { id: 'hooks', label: 'Hooks' },
+  { id: 'ai-summaries', label: 'AI Summaries' },
 ] as const;
 
 type ConfigTab = (typeof CONFIG_TABS)[number]['id'];
@@ -60,6 +62,7 @@ export function ConfigPanel() {
         {activeTab === 'claude-md' && <ClaudeMdEditor />}
         {activeTab === 'mcp' && <McpManager />}
         {activeTab === 'hooks' && <HooksManager />}
+        {activeTab === 'ai-summaries' && <LlmConfigPanel />}
       </div>
     </div>
   );

@@ -1,0 +1,7 @@
+{
+  "provider": "ollama",
+  "baseUrl": "http://100.93.145.114:8000/v1",
+  "apiKey": "",
+  "model": "llama3.1",
+  "autoSummarize": false
+}

@@ -79,6 +79,19 @@ export interface PermissionEvent {
   detail: string;
 }
 
+export interface RecapEntry {
+  timestamp: string;
+  content: string;
+}
+
+export interface AiSummary {
+  content: string;
+  model: string;
+  provider: string;
+  generatedAt: string;
+  sourceLastActivityAt: string;
+}
+
 export interface SubagentInfo {
   sessionId: string;
   parentSessionId: string;
@@ -116,6 +129,8 @@ export interface Session {
   subagents: SubagentInfo[];
   parentSessionId?: string | undefined;
   isSubagent: boolean;
+  recaps: RecapEntry[];
+  aiSummary?: AiSummary | undefined;
 }
 
 export interface Project {
