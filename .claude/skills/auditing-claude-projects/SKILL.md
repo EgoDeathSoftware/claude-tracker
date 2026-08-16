@@ -32,7 +32,7 @@ session-level cost/failure data — use it when the ask spans more than one of t
    `~/.claude/settings.json` / project `.claude/settings*.json` for hooks and permissions, and
    MCP servers from `~/.claude.json`. Checklist: `references/dimensions.md` §1.
 
-3. **Dynamic session audit** — run `scripts/query-tracker-api.sh <projectId>`. If it exits
+3. **Dynamic session audit** — run `bash scripts/query-tracker-api.sh <projectId>`. If it exits
    non-zero (tracker not running), run
    `node scripts/analyze-sessions.mjs <path-to-session-dir>` instead. Either path yields
    cost/model/tool breakdown, cache hit ratio, tool error rate, hook blocks, and skills actually
