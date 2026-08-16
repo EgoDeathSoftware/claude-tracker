@@ -144,6 +144,8 @@ export class SourceWatcher extends EventEmitter {
     this.watcher = watch(`${this.projectsDir}/**/*.jsonl`, {
       ignoreInitial: true,
       persistent: true,
+      usePolling: true,
+      interval: 1000,
       awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
     });
 
