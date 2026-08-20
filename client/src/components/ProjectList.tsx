@@ -1,15 +1,26 @@
 import type { Project } from '@/types.ts';
+import type { SourceKind } from '@/hooks/useSources.ts';
+
+const KIND_LABELS: Record<SourceKind, string> = {
+  'claude-code': 'Claude Code',
+  'opencode': 'OpenCode',
+};
 
 interface Props {
   projects: Project[];
   selectedId: string | null;
   onSelect: (id: string | null) => void;
+  allKinds: SourceKind[];
+  enabledKinds: SourceKind[];
+  onToggleKind: (kind: SourceKind) => void;
   configOpen: boolean;
   onOpenConfig: () => void;
 }
 
 export function ProjectList({
-  projects, selectedId, onSelect, configOpen, onOpenConfig,
+  projects, selectedId, onSelect,
+  allKinds, enabledKinds, onToggleKind,
+  configOpen, onOpenConfig,
 }: Props) {
   return (
     <div className="w-48 shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
@@ -49,6 +60,20 @@ export function ProjectList({
           </svg>
         </button>
       </div>
+      {allKinds.length > 1 && (
+        <div className="flex gap-3 px-4 py-1.5 border-b border-gray-100 text-[11px]">
+          {allKinds.map(kind => (
+            <label key={kind} className="flex items-center gap-1 text-gray-600">
+              <input
+                type="checkbox"
+                checked={enabledKinds.includes(kind)}
+                onChange={() => onToggleKind(kind)}
+              />
+              {KIND_LABELS[kind]}
+            </label>
+          ))}
+        </div>
+      )}
       <div className="overflow-y-auto flex-1">
         <button
           onClick={() => onSelect(null)}

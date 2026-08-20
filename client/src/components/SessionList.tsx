@@ -30,6 +30,7 @@ export function SessionList({
   const allTags = useAllTags();
   const sources = useSources();
   const sourceNameById = new Map(sources.map(s => [s.id, s.name]));
+  const sourceKindById = new Map(sources.map(s => [s.id, s.kind]));
   const [filterTag, setFilterTag] = useState<string | null>(null);
 
   const displayed = filterTag
@@ -115,7 +116,14 @@ export function SessionList({
                 {sources.length > 1 && sourceNameById.has(s.sourceId) && (
                   <span className="px-1.5 py-0.5 rounded text-[9px]
                     font-medium bg-gray-100 text-gray-600 uppercase
-                    tracking-wide">
+                    tracking-wide flex items-center gap-1">
+                    <span className={
+                      sourceKindById.get(s.sourceId) === 'opencode'
+                        ? 'text-emerald-600'
+                        : 'text-indigo-600'
+                    }>
+                      ●
+                    </span>
                     {sourceNameById.get(s.sourceId)}
                   </span>
                 )}
