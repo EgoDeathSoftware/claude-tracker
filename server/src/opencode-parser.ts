@@ -2,7 +2,7 @@ import Database from 'better-sqlite3';
 import { deriveProjectKey } from './project-key.js';
 import type {
   Session, SessionMessage, ToolCallEntry, FileChangeEntry,
-  ContentBlock, CostBreakdown,
+  ContentBlock, CostBreakdown, RawLogEntry,
 } from './types.js';
 
 const LIVE_THRESHOLD_MS = 60_000;
@@ -61,6 +61,21 @@ function buildCostBreakdown(
 
 function timestampFromMs(ms: number): string {
   return new Date(ms).toISOString();
+}
+
+function truncate(s: string, max: number): string {
+  return s.length <= max ? s : s.slice(0, max - 1) + '…';
+}
+
+function summarizeMessage(
+  isTextOnly: boolean,
+  contentString: string,
+  toolNames: string[],
+): string {
+  if (!isTextOnly && toolNames.length > 0) {
+    return `Tool calls: ${toolNames.join(', ')}`;
+  }
+  return contentString ? truncate(contentString, 60) : '(no text)';
 }
 
 function columnExists(db: Database.Database, tableName: string, columnName: string): boolean {
@@ -132,6 +147,7 @@ export async function listOpenCodeSessions(
         );
 
         const messages: SessionMessage[] = [];
+        const logEntries: RawLogEntry[] = [];
         const toolCallEntries: ToolCallEntry[] = [];
         const fileChanges: FileChangeEntry[] = [];
         let firstTimestamp = 0;
@@ -179,6 +195,7 @@ export async function listOpenCodeSessions(
           const contentBlocks: ContentBlock[] = [];
           let contentString = '';
           let isTextOnly = true;
+          const messageToolNames: string[] = [];
 
           for (const part of parts) {
             if (part.type === 'text' && part.text) {
@@ -187,6 +204,7 @@ export async function listOpenCodeSessions(
               isTextOnly = false;
               const toolName = part.tool ?? 'unknown';
               const toolUseId = part.callID || '';
+              messageToolNames.push(toolName);
 
               // Parse input from state
               let input: unknown = {};
@@ -252,6 +270,14 @@ export async function listOpenCodeSessions(
             timestamp: timestampFromMs(msgTime),
             content: isTextOnly ? contentString : contentBlocks,
           });
+
+          logEntries.push({
+            lineNumber: logEntries.length + 1,
+            type: msgRole,
+            uuid: msgRow.id,
+            timestamp: timestampFromMs(msgTime),
+            summary: summarizeMessage(isTextOnly, contentString, messageToolNames),
+          });
         }
 
         // Compute cost breakdown
@@ -286,7 +312,7 @@ export async function listOpenCodeSessions(
           durationMs,
           cwd: directory,
           messages,
-          logEntries: [],
+          logEntries,
           toolCalls: toolCallEntries,
           fileChanges,
           costBreakdown,

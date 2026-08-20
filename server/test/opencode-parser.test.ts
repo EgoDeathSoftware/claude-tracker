@@ -881,6 +881,65 @@ describe('listOpenCodeSessions', () => {
     expect(session.costBreakdown.conversationCost).toBe(0);
   });
 
+  it('populates logEntries with one entry per message, for the Raw Log tab', async () => {
+    const fixture = {
+      projectId: 'proj-1',
+      sessions: [
+        {
+          id: 'session-1',
+          project_id: 'proj-1',
+          directory: '/home/user/my-project',
+          model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
+          cost: 0.001,
+          time_updated: Date.now() - 10 * 60_000,
+        },
+      ],
+      messages: [
+        {
+          id: 'msg-1',
+          session_id: 'session-1',
+          time_created: Date.now() - 10 * 60_000,
+          role: 'user',
+          data: {
+            parts: [
+              { type: 'text', text: 'Read a file for me please, thanks in advance' },
+            ],
+          },
+        },
+        {
+          id: 'msg-2',
+          session_id: 'session-1',
+          time_created: Date.now() - 10 * 60_000 + 1000,
+          role: 'assistant',
+          data: {
+            parts: [
+              {
+                type: 'tool',
+                tool: 'read',
+                callID: 'toolu_1',
+                state: { input: { file_path: '/home/user/my-project/src/app.ts' } },
+              },
+            ],
+          },
+        },
+      ],
+    };
+
+    const dbPath = createTestDB(fixture);
+    const sessions = await listOpenCodeSessions(dbPath, 'test-source');
+
+    expect(sessions).toHaveLength(1);
+    const session = sessions[0]!;
+    expect(session.logEntries).toHaveLength(2);
+    expect(session.logEntries[0]!.lineNumber).toBe(1);
+    expect(session.logEntries[0]!.type).toBe('user');
+    expect(session.logEntries[0]!.uuid).toBe('msg-1');
+    expect(session.logEntries[0]!.summary).toContain('Read a file for me');
+    expect(session.logEntries[1]!.lineNumber).toBe(2);
+    expect(session.logEntries[1]!.type).toBe('assistant');
+    expect(session.logEntries[1]!.summary).toBe('Tool calls: read');
+  });
+
   it('sets filePath to the database path', async () => {
     const fixture = {
       projectId: 'proj-1',
