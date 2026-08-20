@@ -21,6 +21,9 @@
               "enable_thinking": false
             }
           }
+        },
+        "qwen3-coder-next": {
+          "name": "Qwen3 Coder Next"
         }
       }
     }
