@@ -1,12 +1,12 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtempSync, mkdir, writeFile, rm } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import { listOpenCodeSessions } from '../src/opencode-parser.js';
 
-async function makeTmp(): Promise<string> {
-  return mkdtemp(join(tmpdir(), 'opencode-test-'));
+function makeTmp(): string {
+  return mkdtempSync(join(tmpdir(), 'opencode-test-'));
 }
 
 describe('listOpenCodeSessions', () => {
@@ -31,12 +31,12 @@ describe('listOpenCodeSessions', () => {
       model: string;
       cost: number;
       parent_id?: string | null;
-      time_updated: string;
+      time_updated: number;
     }>;
     messages: Array<{
       id: string;
       session_id: string;
-      time_created: string;
+      time_created: number;
       role: 'user' | 'assistant';
       data: { parts: Array<{ type: string; id?: string; tool?: string; text?: string; state?: unknown }> };
     }>;
@@ -62,14 +62,14 @@ describe('listOpenCodeSessions', () => {
         model TEXT,
         cost REAL,
         parent_id TEXT,
-        time_updated TEXT,
+        time_updated INTEGER NOT NULL,
         FOREIGN KEY (project_id) REFERENCES project(id)
       );
 
       CREATE TABLE message (
         id TEXT PRIMARY KEY,
         session_id TEXT,
-        time_created TEXT,
+        time_created INTEGER NOT NULL,
         role TEXT,
         data TEXT,
         FOREIGN KEY (session_id) REFERENCES session(id)
@@ -134,9 +134,10 @@ describe('listOpenCodeSessions', () => {
     `);
 
     for (const msg of fixture.messages) {
-      for (const part of msg.data.parts) {
+      for (let partIdx = 0; partIdx < msg.data.parts.length; partIdx++) {
+        const part = msg.data.parts[partIdx];
         partStmt.run(
-          part.id || `${msg.id}-${part.type}-${part.tool || 'text'}`,
+          part.id || `${msg.id}-${part.type}-${part.tool || 'text'}-${partIdx}`,
           msg.id,
           part.type,
           part.tool || '',
@@ -161,14 +162,14 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -179,7 +180,7 @@ describe('listOpenCodeSessions', () => {
         {
           id: 'msg-2',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:01.000Z',
+          time_created: Date.now() - 10 * 60_000 + 1000,
           role: 'assistant',
           data: {
             parts: [
@@ -218,14 +219,14 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -236,7 +237,7 @@ describe('listOpenCodeSessions', () => {
         {
           id: 'msg-2',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:01.000Z',
+          time_created: Date.now() - 10 * 60_000 + 1000,
           role: 'assistant',
           data: {
             parts: [
@@ -319,14 +320,14 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -337,7 +338,7 @@ describe('listOpenCodeSessions', () => {
         {
           id: 'msg-2',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:01.000Z',
+          time_created: Date.now() - 10 * 60_000 + 1000,
           role: 'assistant',
           data: {
             parts: [
@@ -418,14 +419,14 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.0025,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -458,7 +459,7 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
         {
           id: 'child-456',
@@ -467,14 +468,14 @@ describe('listOpenCodeSessions', () => {
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.0005,
           parent_id: 'parent-123',
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'parent-123',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -485,7 +486,7 @@ describe('listOpenCodeSessions', () => {
         {
           id: 'msg-2',
           session_id: 'child-456',
-          time_created: '2026-04-01T10:00:01.000Z',
+          time_created: Date.now() - 10 * 60_000 + 1000,
           role: 'user',
           data: {
             parts: [
@@ -532,13 +533,13 @@ describe('listOpenCodeSessions', () => {
         model TEXT,
         cost REAL,
         parent_id TEXT,
-        time_updated TEXT
+        time_updated INTEGER NOT NULL
       );
 
       CREATE TABLE message (
         id TEXT PRIMARY KEY,
         session_id TEXT,
-        time_created TEXT,
+        time_created INTEGER NOT NULL,
         role TEXT,
         data TEXT
       );
@@ -566,7 +567,7 @@ describe('listOpenCodeSessions', () => {
       '/home/user/my-project',
       JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
       0.001,
-      new Date().toISOString(),
+      Date.now(),
     );
 
     // Insert malformed session (invalid JSON in model column)
@@ -577,7 +578,7 @@ describe('listOpenCodeSessions', () => {
       '/home/user/my-project',
       'not valid json',
       0.001,
-      new Date().toISOString(),
+      Date.now(),
     );
 
     // Insert valid message for valid session
@@ -585,7 +586,7 @@ describe('listOpenCodeSessions', () => {
       VALUES (?, ?, ?, ?, ?)`).run(
       'msg-1',
       'valid-session',
-      '2026-04-01T10:00:00.000Z',
+      Date.now() - 10 * 60_000,
       'user',
       JSON.stringify({ parts: [{ type: 'text', text: 'Hello' }] }),
     );
@@ -595,7 +596,7 @@ describe('listOpenCodeSessions', () => {
       VALUES (?, ?, ?, ?, ?)`).run(
       'msg-2',
       'valid-session',
-      '2026-04-01T10:00:01.000Z',
+      Date.now() - 10 * 60_000 + 1000,
       'assistant',
       JSON.stringify({ parts: [{ type: 'text', text: 'Hi' }] }),
     );
@@ -622,14 +623,14 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -641,7 +642,7 @@ describe('listOpenCodeSessions', () => {
         {
           id: 'msg-2',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:01.000Z',
+          time_created: Date.now() - 10 * 60_000 + 1000,
           role: 'assistant',
           data: {
             parts: [
@@ -679,14 +680,14 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'openai', id: 'gpt-4o' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -705,8 +706,8 @@ describe('listOpenCodeSessions', () => {
   });
 
   it('derives status based on time_updated', async () => {
-    // Recent (live)
-    const recent = new Date(Date.now() - 30_000).toISOString();
+    // Recent (live) - less than 60 seconds ago
+    const recent = Date.now() - 30_000;
     const fixtureLive = {
       projectId: 'proj-1',
       sessions: [
@@ -722,8 +723,8 @@ describe('listOpenCodeSessions', () => {
       messages: [],
     };
 
-    // Old (done)
-    const old = new Date(Date.now() - 10 * 60_000).toISOString();
+    // Old (done) - more than 5 minutes ago
+    const old = Date.now() - 10 * 60_000;
     const fixtureDone = {
       projectId: 'proj-1',
       sessions: [
@@ -759,14 +760,14 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -777,7 +778,7 @@ describe('listOpenCodeSessions', () => {
         {
           id: 'msg-2',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:01.000Z',
+          time_created: Date.now() - 10 * 60_000 + 1000,
           role: 'assistant',
           data: {
             parts: [
@@ -810,14 +811,14 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.0015,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [
         {
           id: 'msg-1',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:00.000Z',
+          time_created: Date.now() - 10 * 60_000,
           role: 'user',
           data: {
             parts: [
@@ -828,7 +829,7 @@ describe('listOpenCodeSessions', () => {
         {
           id: 'msg-2',
           session_id: 'session-1',
-          time_created: '2026-04-01T10:00:01.000Z',
+          time_created: Date.now() - 10 * 60_000 + 1000,
           role: 'assistant',
           data: {
             parts: [
@@ -872,7 +873,7 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/my-project',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [],
@@ -895,7 +896,7 @@ describe('listOpenCodeSessions', () => {
           directory: '/home/user/My-Project-Name',
           model: JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
           cost: 0.001,
-          time_updated: new Date(Date.now() - 10 * 60_000).toISOString(),
+          time_updated: Date.now() - 10 * 60_000,
         },
       ],
       messages: [],
