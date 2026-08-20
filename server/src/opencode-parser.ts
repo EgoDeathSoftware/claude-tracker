@@ -129,7 +129,6 @@ export async function listOpenCodeSessions(
         const fileChanges: FileChangeEntry[] = [];
         let firstTimestamp = 0;
         let lastTimestamp = 0;
-        let totalToolCost = 0;
 
         for (const msgRow of msgRows as Array<{
           id: string;
@@ -151,7 +150,7 @@ export async function listOpenCodeSessions(
             tool?: string;
             text?: string;
             call_id?: string;
-            state?: string;
+            state?: Record<string, unknown>;
           }> = [];
 
           try {
@@ -175,13 +174,12 @@ export async function listOpenCodeSessions(
               isTextOnly = false;
               const toolName = part.tool ?? 'unknown';
               const toolUseId = part.call_id || '';
-              let costUsd = 0;
 
               // Parse input from state
               let input: unknown = {};
               if (part.state) {
                 // state is already a parsed object (not a JSON string)
-                const state = part.state as Record<string, unknown>;
+                const state = part.state;
                 input = state['input'] ?? state;
               }
 
@@ -197,7 +195,7 @@ export async function listOpenCodeSessions(
               let output: string | undefined;
               if (part.state) {
                 // state is already a parsed object (not a JSON string)
-                const state = part.state as Record<string, unknown>;
+                const state = part.state;
                 if (state['output'] !== undefined) {
                   output = typeof state['output'] === 'string' ? state['output'] : JSON.stringify(state['output']);
                 }
@@ -207,7 +205,6 @@ export async function listOpenCodeSessions(
               }
 
               toolCallEntries.push(toolEntry);
-              totalToolCost += costUsd;
 
               // Build ContentBlock for tool use
               contentBlocks.push({
@@ -241,8 +238,7 @@ export async function listOpenCodeSessions(
             uuid: msgRow.id,
             type: role,
             timestamp: timestampFromMs(msgTime),
-            // Content should always be an array for consistency
-            content: isTextOnly ? [contentString] : contentBlocks,
+            content: isTextOnly ? contentString : contentBlocks,
           });
         }
 

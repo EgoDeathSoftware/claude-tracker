@@ -1,5 +1,6 @@
 import { describe, it, expect, afterEach, beforeEach } from 'vitest';
-import { mkdtempSync, mkdir, writeFile, rm } from 'node:fs';
+import { mkdtempSync } from 'node:fs';
+import { rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
@@ -796,9 +797,9 @@ describe('listOpenCodeSessions', () => {
     const session = sessions[0]!;
     expect(session.messages).toHaveLength(2);
     expect(session.messages[0]!.type).toBe('user');
-    expect(session.messages[0]!.content).toEqual(['Hello, fix the login bug.']);
+    expect(session.messages[0]!.content).toEqual('Hello, fix the login bug.');
     expect(session.messages[1]!.type).toBe('assistant');
-    expect(session.messages[1]!.content).toEqual(['I will fix it.']);
+    expect(session.messages[1]!.content).toEqual('I will fix it.');
   });
 
   it('sets costBreakdown with byTool counts (when tool calls present)', async () => {
