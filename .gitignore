@@ -5,6 +5,11 @@ dist/
 .worktrees/
 .pnpm-store/
 
+.devcontainer/
+.playwright-mcp/
+.vscode/
+
+
 # Multi-source tracker config
 server/config/sources.json
 
