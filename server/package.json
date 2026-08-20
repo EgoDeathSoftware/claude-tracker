@@ -5,7 +5,8 @@
   "scripts": {
     "dev": "node --watch dist/index.js",
     "build": "tsc",
-    "predev": "tsc"
+    "predev": "tsc",
+    "test": "vitest run"
   },
   "dependencies": {
     "@hono/node-server": "1.14.1",
