@@ -2,8 +2,47 @@ import { describe, it, expect, afterEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import Database from 'better-sqlite3';
 import { SessionRegistry } from '../src/registry.js';
 import type { Source } from '../src/sources.js';
+
+// Mirrors the real opencode DB (verified against a live install) - parts
+// live in their own table, one row per part, keyed by message_id.
+async function seedOpenCodeDb(
+  dataDir: string,
+  session: { id: string; projectId: string; directory: string; timeUpdated: number },
+): Promise<void> {
+  await mkdir(dataDir, { recursive: true });
+  const db = new Database(join(dataDir, 'opencode.db'));
+  db.exec(`
+    CREATE TABLE session (
+      id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, model TEXT, cost REAL,
+      parent_id TEXT, time_updated INTEGER NOT NULL, title TEXT
+    );
+    CREATE TABLE message (
+      id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER NOT NULL, data TEXT
+    );
+    CREATE TABLE part (
+      id TEXT PRIMARY KEY, message_id TEXT, time_created INTEGER NOT NULL, data TEXT
+    );
+  `);
+  db.prepare(`
+    INSERT INTO session (id, project_id, directory, model, cost, parent_id, time_updated, title)
+    VALUES (?, ?, ?, ?, ?, NULL, ?, ?)
+  `).run(
+    session.id, session.projectId, session.directory,
+    JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
+    0.001, session.timeUpdated, 'OpenCode session',
+  );
+  const msgId = `${session.id}-msg-1`;
+  db.prepare(`INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)`).run(
+    msgId, session.id, session.timeUpdated, JSON.stringify({ role: 'user' }),
+  );
+  db.prepare(`INSERT INTO part (id, message_id, time_created, data) VALUES (?, ?, ?, ?)`).run(
+    `${msgId}-part-1`, msgId, session.timeUpdated, JSON.stringify({ type: 'text', text: 'hello' }),
+  );
+  db.close();
+}
 
 function makeUserLine(
   uuid: string,
@@ -66,8 +105,8 @@ describe('SessionRegistry', () => {
     );
 
     const sources: Source[] = [
-      { id: 'wsl', name: 'WSL', path: wslDir },
-      { id: 'windows', name: 'Windows', path: winDir },
+      { id: 'wsl', name: 'WSL', path: wslDir, kind: 'claude-code' },
+      { id: 'windows', name: 'Windows', path: winDir, kind: 'claude-code' },
     ];
     const reg = new SessionRegistry(sources);
     await reg.start();
@@ -106,7 +145,7 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir },
+      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
     ]);
     await reg.start();
     try {
@@ -132,7 +171,7 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir },
+      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
     ]);
     await reg.start();
     try {
@@ -163,7 +202,7 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir },
+      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
     ]);
     await reg.start();
     try {
@@ -188,14 +227,94 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'gone', name: 'Gone', path: '/definitely/not/here' },
-      { id: 'ok', name: 'OK', path: ok },
+      { id: 'gone', name: 'Gone', path: '/definitely/not/here', kind: 'claude-code' },
+      { id: 'ok', name: 'OK', path: ok, kind: 'claude-code' },
     ]);
     await reg.start();
     try {
       const projects = reg.getProjects();
       expect(projects).toHaveLength(1);
       expect(projects[0]!.id).toBe('foo');
+    } finally {
+      await reg.stop();
+    }
+  });
+
+  it('dispatches an OpenCodeWatcher for kind: opencode and merges with a claude-code source', async () => {
+    const claudeDir = await mkdtemp(join(tmpdir(), 'reg-cc-'));
+    const opencodeDir = await mkdtemp(join(tmpdir(), 'reg-oc-'));
+    cleanup.push(claudeDir, opencodeDir);
+
+    await seedSession(
+      claudeDir,
+      '-shared-project',
+      'cc-sess',
+      '/shared/project',
+      '2026-04-01T10:00:00.000Z',
+    );
+    await seedOpenCodeDb(opencodeDir, {
+      id: 'oc-sess',
+      projectId: 'proj-1',
+      directory: '/shared/project',
+      timeUpdated: new Date('2026-04-02T10:00:00.000Z').getTime(),
+    });
+
+    const reg = new SessionRegistry([
+      { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
+      { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+    ]);
+    await reg.start();
+    try {
+      const sessions = reg.getSessions();
+      expect(sessions).toHaveLength(2);
+      expect(sessions.map(s => s.sourceId).sort()).toEqual(['claude', 'opencode']);
+
+      // Proves the aggregation layer really is kind-agnostic: both sources'
+      // sessions share a project basename and merge into one Project.
+      const projects = reg.getProjects();
+      expect(projects).toHaveLength(1);
+      expect(projects[0]!.sources.sort()).toEqual(['claude', 'opencode']);
+      expect(projects[0]!.sessionCount).toBe(2);
+    } finally {
+      await reg.stop();
+    }
+  });
+
+  it('filters getProjects/getSessions by kind, and returns everything when kinds is omitted', async () => {
+    const claudeDir = await mkdtemp(join(tmpdir(), 'reg-cc2-'));
+    const opencodeDir = await mkdtemp(join(tmpdir(), 'reg-oc2-'));
+    cleanup.push(claudeDir, opencodeDir);
+
+    await seedSession(
+      claudeDir,
+      '-claude-only-project',
+      'cc-sess',
+      '/claude/only/claude-project',
+      '2026-04-01T10:00:00.000Z',
+    );
+    await seedOpenCodeDb(opencodeDir, {
+      id: 'oc-sess',
+      projectId: 'proj-1',
+      directory: '/opencode/only/opencode-project',
+      timeUpdated: new Date('2026-04-02T10:00:00.000Z').getTime(),
+    });
+
+    const reg = new SessionRegistry([
+      { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
+      { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+    ]);
+    await reg.start();
+    try {
+      expect(reg.getSessions(undefined, ['opencode'])).toHaveLength(1);
+      expect(reg.getSessions(undefined, ['opencode'])[0]!.sourceId).toBe('opencode');
+
+      expect(reg.getProjects(['claude-code'])).toHaveLength(1);
+      expect(reg.getProjects(['claude-code'])[0]!.sources).toEqual(['claude']);
+
+      // Omitting kinds (or passing undefined) returns everything, unchanged
+      // from today's behavior.
+      expect(reg.getSessions()).toHaveLength(2);
+      expect(reg.getProjects()).toHaveLength(2);
     } finally {
       await reg.stop();
     }

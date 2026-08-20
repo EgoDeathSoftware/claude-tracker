@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import type { SessionRegistry } from './registry.ts';
 import type { TrackerDB } from './db.ts';
+import type { SourceKind } from './sources.ts';
 import { readRawLines } from './parser.js';
 import {
   readSettings,
@@ -40,14 +42,22 @@ export function buildApp(
 
   // --- Projects & Sessions ---
 
-  app.get('/api/projects', c => c.json(registry.getProjects()));
+  function parseKinds(c: Context): SourceKind[] | undefined {
+    const kindsParam = c.req.query('kinds');
+    if (!kindsParam) return undefined;
+    return kindsParam.split(',').filter(
+      (k): k is SourceKind => k === 'claude-code' || k === 'opencode',
+    );
+  }
+
+  app.get('/api/projects', c => c.json(registry.getProjects(parseKinds(c))));
 
   app.get('/api/sources', c => c.json(registry.getSources()));
 
   app.get('/api/sessions', c => {
     const projectId = c.req.query('projectId');
     const tag = c.req.query('tag');
-    let sessions = registry.getSessions(projectId);
+    let sessions = registry.getSessions(projectId, parseKinds(c));
     if (tag) {
       const tagSessionIds = new Set(db.getSessionsByTag(tag));
       sessions = sessions.filter(s => tagSessionIds.has(s.id));

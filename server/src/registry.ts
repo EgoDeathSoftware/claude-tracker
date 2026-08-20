@@ -1,14 +1,31 @@
 import { EventEmitter } from 'node:events';
 import { SourceWatcher } from './source-watcher.js';
+import { OpenCodeWatcher } from './opencode-watcher.js';
 import type { TrackerDB } from './db.js';
 import type { Session, Project } from './types.js';
-import type { Source } from './sources.js';
+import type { Source, SourceKind } from './sources.js';
 import { displayNameFromCwd } from './project-key.js';
 
+interface AgentWatcher extends EventEmitter {
+  start(): Promise<void>;
+  stop(): Promise<void>;
+  getAllSessions(): Session[];
+}
+
+function createWatcher(source: Source, db?: TrackerDB): AgentWatcher {
+  switch (source.kind) {
+    case 'claude-code':
+      return new SourceWatcher(source.id, source.path, db);
+    case 'opencode':
+      return new OpenCodeWatcher(source.id, source.path, db);
+  }
+}
+
 export class SessionRegistry extends EventEmitter {
-  private watchers: SourceWatcher[] = [];
+  private watchers: AgentWatcher[] = [];
   private sessions = new Map<string, Session>();
   private db: TrackerDB | null;
+  private kindBySourceId: Map<string, SourceKind>;
 
   constructor(
     private sources: Source[],
@@ -16,11 +33,12 @@ export class SessionRegistry extends EventEmitter {
   ) {
     super();
     this.db = db ?? null;
+    this.kindBySourceId = new Map(this.sources.map(s => [s.id, s.kind]));
   }
 
   async start(): Promise<void> {
     this.watchers = this.sources.map(
-      s => new SourceWatcher(s.id, s.path, this.db ?? undefined),
+      s => createWatcher(s, this.db ?? undefined),
     );
 
     const results = await Promise.allSettled(
@@ -78,10 +96,12 @@ export class SessionRegistry extends EventEmitter {
     this.sessions.set(session.id, session);
   }
 
-  getProjects(): Project[] {
+  getProjects(kinds?: SourceKind[]): Project[] {
+    const allowedKinds = kinds ? new Set(kinds) : null;
     const map = new Map<string, Project>();
     for (const session of this.sessions.values()) {
       if (session.isSubagent) continue;
+      if (allowedKinds && !allowedKinds.has(this.kindBySourceId.get(session.sourceId)!)) continue;
       const existing = map.get(session.projectId);
       if (!existing) {
         map.set(session.projectId, {
@@ -114,8 +134,12 @@ export class SessionRegistry extends EventEmitter {
     );
   }
 
-  getSessions(projectId?: string): Session[] {
-    const all = [...this.sessions.values()].filter(s => !s.isSubagent);
+  getSessions(projectId?: string, kinds?: SourceKind[]): Session[] {
+    const allowedKinds = kinds ? new Set(kinds) : null;
+    const all = [...this.sessions.values()].filter(
+      s => !s.isSubagent
+        && (!allowedKinds || allowedKinds.has(this.kindBySourceId.get(s.sourceId)!)),
+    );
     const filtered = projectId
       ? all.filter(s => s.projectId === projectId)
       : all;
