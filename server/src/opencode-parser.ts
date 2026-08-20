@@ -124,6 +124,13 @@ export async function listOpenCodeSessions(
         }
         const msgRows = msgStmt.all(sessionId);
 
+        // Parts live in their own table, one row per part, keyed by message_id -
+        // message.data does not embed a parts array.
+        const hasPartTimeCreated = columnExists(db, 'part', 'time_created');
+        const partStmt = db.prepare(
+          `SELECT * FROM part WHERE message_id = ? ORDER BY ${hasPartTimeCreated ? 'time_created' : 'time_updated'}`,
+        );
+
         const messages: SessionMessage[] = [];
         const toolCallEntries: ToolCallEntry[] = [];
         const fileChanges: FileChangeEntry[] = [];
@@ -135,31 +142,37 @@ export async function listOpenCodeSessions(
           session_id: string;
           time_created: number;
           time_updated: number;
-          role: string;
           data: string;
         }>) {
           // Use time_created if available, otherwise fall back to time_updated
-          const msgTime = (msgRow as any).time_created || (msgRow as any).time_updated;
+          const msgTime = msgRow.time_created || msgRow.time_updated;
 
           if (!firstTimestamp) firstTimestamp = msgTime;
           lastTimestamp = msgTime;
 
-          let parts: Array<{
+          let msgRole: 'user' | 'assistant' = 'assistant';
+          try {
+            const msgData = JSON.parse(msgRow.data) as Record<string, unknown>;
+            if (msgData['role'] === 'user') msgRole = 'user';
+          } catch {
+            // Malformed message data - default to assistant, no role signal available
+          }
+
+          const partRows = partStmt.all(msgRow.id) as Array<{ data: string }>;
+          const parts: Array<{
             id?: string;
             type: string;
             tool?: string;
             text?: string;
-            call_id?: string;
+            callID?: string;
             state?: Record<string, unknown>;
           }> = [];
-
-          try {
-            const msgData = JSON.parse(msgRow.data);
-            if (msgData.parts && Array.isArray(msgData.parts)) {
-              parts = msgData.parts;
+          for (const partRow of partRows) {
+            try {
+              parts.push(JSON.parse(partRow.data));
+            } catch {
+              // Skip malformed part rows without failing the whole message
             }
-          } catch {
-            // Skip malformed message data, but still include an empty message
           }
 
           // Build content for SessionMessage
@@ -173,7 +186,7 @@ export async function listOpenCodeSessions(
             } else if (part.type === 'tool') {
               isTextOnly = false;
               const toolName = part.tool ?? 'unknown';
-              const toolUseId = part.call_id || '';
+              const toolUseId = part.callID || '';
 
               // Parse input from state
               let input: unknown = {};
@@ -233,10 +246,9 @@ export async function listOpenCodeSessions(
             }
           }
 
-          const role = msgRow.role === 'user' ? 'user' : 'assistant';
           messages.push({
             uuid: msgRow.id,
-            type: role,
+            type: msgRole,
             timestamp: timestampFromMs(msgTime),
             content: isTextOnly ? contentString : contentBlocks,
           });

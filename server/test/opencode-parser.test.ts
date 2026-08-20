@@ -39,7 +39,7 @@ describe('listOpenCodeSessions', () => {
       session_id: string;
       time_created: number;
       role: 'user' | 'assistant';
-      data: { parts: Array<{ type: string; id?: string; tool?: string; text?: string; state?: unknown }> };
+      data: { parts: Array<{ type: string; id?: string; tool?: string; text?: string; callID?: string; state?: unknown }> };
     }>;
   }): string {
     const dbPath = join(makeTmp(), 'test.db');
@@ -47,7 +47,10 @@ describe('listOpenCodeSessions', () => {
 
     const db = new Database(dbPath);
 
-    // Create schema
+    // Schema mirrors the real opencode DB (verified against a live install):
+    // parts live in their own table, one row per part, keyed by message_id -
+    // message.data does not embed a parts array, and message has no role
+    // column (role lives inside data JSON).
     db.exec(`
       CREATE TABLE project (
         id TEXT PRIMARY KEY,
@@ -71,7 +74,6 @@ describe('listOpenCodeSessions', () => {
         id TEXT PRIMARY KEY,
         session_id TEXT,
         time_created INTEGER NOT NULL,
-        role TEXT,
         data TEXT,
         FOREIGN KEY (session_id) REFERENCES session(id)
       );
@@ -79,11 +81,8 @@ describe('listOpenCodeSessions', () => {
       CREATE TABLE part (
         id TEXT PRIMARY KEY,
         message_id TEXT,
-        type TEXT,
-        tool TEXT,
-        text TEXT,
-        call_id TEXT,
-        state TEXT,
+        time_created INTEGER NOT NULL,
+        data TEXT,
         FOREIGN KEY (message_id) REFERENCES message(id)
       );
     `);
@@ -112,10 +111,10 @@ describe('listOpenCodeSessions', () => {
       );
     }
 
-    // Insert messages
+    // Insert messages - data holds only {role}, matching the real schema
     const messageStmt = db.prepare(`
-      INSERT INTO message (id, session_id, time_created, role, data)
-      VALUES (?, ?, ?, ?, ?)
+      INSERT INTO message (id, session_id, time_created, data)
+      VALUES (?, ?, ?, ?)
     `);
 
     for (const msg of fixture.messages) {
@@ -123,15 +122,14 @@ describe('listOpenCodeSessions', () => {
         msg.id,
         msg.session_id,
         msg.time_created,
-        msg.role,
-        JSON.stringify(msg.data),
+        JSON.stringify({ role: msg.role }),
       );
     }
 
-    // Insert parts
+    // Insert parts - one row per part, data holds {type, tool, text, callID, state}
     const partStmt = db.prepare(`
-      INSERT INTO part (id, message_id, type, tool, text, call_id, state)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO part (id, message_id, time_created, data)
+      VALUES (?, ?, ?, ?)
     `);
 
     for (const msg of fixture.messages) {
@@ -140,11 +138,14 @@ describe('listOpenCodeSessions', () => {
         partStmt.run(
           part.id || `${msg.id}-${part.type}-${part.tool || 'text'}-${partIdx}`,
           msg.id,
-          part.type,
-          part.tool || '',
-          part.text || '',
-          part.call_id || '',
-          part.state ? JSON.stringify(part.state) : null,
+          msg.time_created + partIdx,
+          JSON.stringify({
+            type: part.type,
+            tool: part.tool,
+            text: part.text,
+            callID: part.callID,
+            state: part.state,
+          }),
         );
       }
     }
@@ -245,7 +246,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'read',
-                call_id: 'toolu_1',
+                callID: 'toolu_1',
                 state: {
                   input: { file_path: '/home/user/my-project/src/app.ts' },
                 },
@@ -253,7 +254,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'write',
-                call_id: 'toolu_2',
+                callID: 'toolu_2',
                 state: {
                   input: { file_path: '/home/user/my-project/src/new.ts', content: 'hello' },
                 },
@@ -261,7 +262,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'edit',
-                call_id: 'toolu_3',
+                callID: 'toolu_3',
                 state: {
                   input: {
                     file_path: '/home/user/my-project/src/app.ts',
@@ -273,7 +274,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'bash',
-                call_id: 'toolu_4',
+                callID: 'toolu_4',
                 state: {
                   input: { command: 'ls -la' },
                 },
@@ -346,7 +347,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'read',
-                call_id: 'toolu_1',
+                callID: 'toolu_1',
                 state: {
                   input: { file_path: '/home/user/my-project/src/app.ts' },
                 },
@@ -354,7 +355,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'write',
-                call_id: 'toolu_2',
+                callID: 'toolu_2',
                 state: {
                   input: { file_path: '/home/user/my-project/src/new.ts', content: 'hello' },
                 },
@@ -362,7 +363,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'edit',
-                call_id: 'toolu_3',
+                callID: 'toolu_3',
                 state: {
                   input: {
                     file_path: '/home/user/my-project/src/app.ts',
@@ -374,7 +375,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'bash',
-                call_id: 'toolu_4',
+                callID: 'toolu_4',
                 state: {
                   input: { command: 'ls -la' },
                 },
@@ -541,18 +542,14 @@ describe('listOpenCodeSessions', () => {
         id TEXT PRIMARY KEY,
         session_id TEXT,
         time_created INTEGER NOT NULL,
-        role TEXT,
         data TEXT
       );
 
       CREATE TABLE part (
         id TEXT PRIMARY KEY,
         message_id TEXT,
-        type TEXT,
-        tool TEXT,
-        text TEXT,
-        call_id TEXT,
-        state TEXT
+        time_created INTEGER NOT NULL,
+        data TEXT
       );
     `);
 
@@ -582,24 +579,36 @@ describe('listOpenCodeSessions', () => {
       Date.now(),
     );
 
-    // Insert valid message for valid session
-    db.prepare(`INSERT INTO message (id, session_id, time_created, role, data)
-      VALUES (?, ?, ?, ?, ?)`).run(
+    // Insert valid message + part for valid session
+    db.prepare(`INSERT INTO message (id, session_id, time_created, data)
+      VALUES (?, ?, ?, ?)`).run(
       'msg-1',
       'valid-session',
       Date.now() - 10 * 60_000,
-      'user',
-      JSON.stringify({ parts: [{ type: 'text', text: 'Hello' }] }),
+      JSON.stringify({ role: 'user' }),
+    );
+    db.prepare(`INSERT INTO part (id, message_id, time_created, data)
+      VALUES (?, ?, ?, ?)`).run(
+      'part-1',
+      'msg-1',
+      Date.now() - 10 * 60_000,
+      JSON.stringify({ type: 'text', text: 'Hello' }),
     );
 
-    // Insert malformed part (invalid JSON in state)
-    db.prepare(`INSERT INTO message (id, session_id, time_created, role, data)
-      VALUES (?, ?, ?, ?, ?)`).run(
+    // Second message + part, both well-formed
+    db.prepare(`INSERT INTO message (id, session_id, time_created, data)
+      VALUES (?, ?, ?, ?)`).run(
       'msg-2',
       'valid-session',
       Date.now() - 10 * 60_000 + 1000,
-      'assistant',
-      JSON.stringify({ parts: [{ type: 'text', text: 'Hi' }] }),
+      JSON.stringify({ role: 'assistant' }),
+    );
+    db.prepare(`INSERT INTO part (id, message_id, time_created, data)
+      VALUES (?, ?, ?, ?)`).run(
+      'part-2',
+      'msg-2',
+      Date.now() - 10 * 60_000 + 1000,
+      JSON.stringify({ type: 'text', text: 'Hi' }),
     );
 
     db.close();
@@ -635,11 +644,10 @@ describe('listOpenCodeSessions', () => {
           role: 'user',
           data: {
             parts: [
-              { type: 'text', text: 'Check part.' },
+              { type: 'text', text: 'Check part.', id: 'part-broken' },
             ],
           },
         },
-        // This message has invalid JSON in its data
         {
           id: 'msg-2',
           session_id: 'session-1',
@@ -650,7 +658,7 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'read',
-                call_id: 'toolu_1',
+                callID: 'toolu_1',
                 state: {
                   input: { file_path: '/home/user/my-project/src/app.ts' },
                 },
@@ -662,10 +670,19 @@ describe('listOpenCodeSessions', () => {
     };
 
     const dbPath = createTestDB(fixture);
+
+    // Corrupt msg-1's part row directly - createTestDB always writes valid
+    // JSON, so this is the only way to exercise the per-part try/catch.
+    const db = new Database(dbPath);
+    db.prepare(`UPDATE part SET data = ? WHERE id = ?`).run('not valid json', 'part-broken');
+    db.close();
+
     const sessions = await listOpenCodeSessions(dbPath, 'test-source');
 
     expect(sessions).toHaveLength(1);
     expect(sessions[0]!.id).toBe('session-1');
+    // The corrupted part is skipped, but the rest of msg-1 and msg-2 still parse
+    expect(sessions[0]!.messages).toHaveLength(2);
     expect(sessions[0]!.toolCalls).toHaveLength(1);
     expect(sessions[0]!.toolCalls[0]!.toolName).toBe('read');
     expect(sessions[0]!.toolCalls[0]!.toolUseId).toBe('toolu_1');
@@ -837,13 +854,13 @@ describe('listOpenCodeSessions', () => {
               {
                 type: 'tool',
                 tool: 'read',
-                call_id: 'toolu_1',
+                callID: 'toolu_1',
                 state: { input: { file_path: '/home/user/my-project/src/app.ts' } },
               },
               {
                 type: 'tool',
                 tool: 'read',
-                call_id: 'toolu_2',
+                callID: 'toolu_2',
                 state: { input: { file_path: '/home/user/my-project/src/util.ts' } },
               },
             ],
