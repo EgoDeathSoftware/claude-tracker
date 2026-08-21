@@ -1,145 +1,134 @@
-# Task: `server/src/opencode-parser.ts` — opencode SQLite → `Session`
-
-## Context
-
-This repo is a Claude Code session tracker (Hono server + React client). It is gaining
-support for tracking **opencode CLI** agent sessions alongside Claude Code sessions.
-opencode stores its sessions in its own SQLite database rather than JSONL files, so this
-task adds a parser that reads that SQLite DB and produces the same `Session` objects the
-rest of the app already consumes.
-
-**Read these first — they contain the authoritative spec:**
-
-1. `docs/superpowers/plans/2026-08-20-opencode-session-tracking.md`, section
-   **"### Task 2: `server/src/opencode-parser.ts` — SQLite → `Session`"**. This is your
-   spec. It contains the exact confirmed SQLite schema for the four tables you read
-   (`project`, `session`, `message`, `part`), the confirmed tool-name → file-op mapping,
-   the exact test scenarios to write, and the field-by-field mapping from SQLite rows to
-   the `Session` type. Follow it precisely.
-2. `/workspace/CLAUDE.md` — full repo conventions (TypeScript strict settings, file
-   layout, testing patterns). Do not restate it; follow it.
-
-A prerequisite task (`Source.kind` discriminator in `server/src/sources.ts`) is already
-merged. Do not redo it.
+# Task: `server/src/opencode-watcher.ts` — polling watcher for opencode sessions
 
 ## Spec
 
-Create `server/src/opencode-parser.ts` exporting:
+This repo tracks Claude Code sessions parsed from JSONL files. We are adding support for
+tracking **opencode** CLI sessions, which live in a SQLite database instead.
+
+Task 2 (already complete, do NOT modify) added `server/src/opencode-parser.ts`, which exports:
 
 ```ts
-export async function listOpenCodeSessions(
-  dbPath: string,
-  sourceId: string,
-): Promise<Session[]>
+export async function listOpenCodeSessions(dbPath: string, sourceId: string): Promise<Session[]>
 ```
 
-Behaviour, per the plan section named above:
+Your job is Task 3: a polling watcher that mirrors the existing `SourceWatcher` contract, but
+polls a SQLite file instead of using chokidar on JSONL files.
 
-- Open the DB **read-only** with `better-sqlite3` (already a server dependency):
-  `new Database(dbPath, { readonly: true, fileMustExist: true })`.
-- Query all `session` rows. For each row, build one `Session`.
-- `projectId` = `deriveProjectKey(session.directory, sourceId, session.project_id)`,
-  imported unchanged from `./project-key.js`.
-- Load that session's `message` rows ordered by `time_created`; for each, its `part` rows
-  ordered by `time_created`. Build `SessionMessage[]`: `content` from `text` parts;
-  `tool` parts represented as `ContentBlock`s of `type: 'tool_use'` / `'tool_result'`,
-  matching the shape the client already renders for Claude sessions.
-- `toolCalls: ToolCallEntry[]` from every `tool`-type part across all messages, with
-  `toolUseId` / `toolName` / `input` / `output` populated from `callID` / `tool` /
-  `state.input` / `state.output`.
-- `fileChanges: FileChangeEntry[]` via a local `FILE_TOOLS` map
-  `{ read: 'read', write: 'write', edit: 'edit' }` — same shape as the `FILE_TOOLS` map in
-  `server/src/parser.ts`. Tool parts whose `tool` is not a key of that map (notably `bash`
-  and `patch`) are **excluded** from `fileChanges`.
-- `hookEvents: []`, `permissionEvents: []`, `recaps: []`, `subagents: []`.
-  **Do not implement subagent linking here** — a later task's watcher handles it.
-- `parentSessionId = session.parent_id ?? undefined`;
-  `isSubagent = session.parent_id != null`.
-- `costUsd` = the session row's `cost` column.
-- `costBreakdown` = `{ byTool: <call counts per toolName, cost: 0>, conversationCost:
-  session.cost, toolCost: 0, totalCost: session.cost }`.
-- `filePath` = `dbPath`.
-- `model` = `` `${parsed.providerID}/${parsed.id}` `` parsed from the `session.model` JSON
-  column.
-- `status` = the same `live` / `waiting` / `done` derivation `server/src/parser.ts` uses,
-  but based on `session.time_updated` instead of file mtime (there is no per-session file
-  to stat).
+Create `server/src/opencode-watcher.ts` exporting:
 
-**Resilience:** wrap per-session parsing in try/catch. A malformed row (e.g. `JSON.parse`
-throws on `message.data` or `part.data`, or the session row is otherwise unusable) must
-log via `console.error` and skip **only that session** — it must not crash the scan or
-throw out of `listOpenCodeSessions`. This mirrors the existing per-file try/catch pattern
-in `server/src/parser.ts`.
+```ts
+export class OpenCodeWatcher extends EventEmitter {
+  constructor(
+    public readonly sourceId: string,
+    private readonly dataDir: string, // e.g. ~/.local/share/opencode
+    db?: TrackerDB,
+  )
+  async start(): Promise<void>   // initial full scan, then begin polling
+  async stop(): Promise<void>    // clear the poll interval
+  getAllSessions(): Session[]
+  async pollOnce(): Promise<void> // one poll cycle; used by the timer AND by tests
+}
+```
 
-## Approach: TDD (required)
+Behaviour:
 
-1. Write `server/test/opencode-parser.test.ts` **first**, per the plan's Step 1.
-2. Run `cd server && npx vitest run test/opencode-parser.test.ts` and confirm it FAILS
-   (module not found).
-3. Implement `server/src/opencode-parser.ts`.
-4. Re-run and confirm it PASSES.
+- `dbPath = join(dataDir, 'opencode.db')`.
+- `start()` does an initial full scan via `listOpenCodeSessions(dbPath, this.sourceId)`,
+  populates an in-memory `Map<string, Session>` keyed by session `id`, indexes each
+  non-subagent session into the DB (`this.db?.indexSession(session)` — only when `db` was
+  provided and `!session.isSubagent`), then runs the subagent-linking pass, then starts a
+  `setInterval` calling `pollOnce()` every **1000ms**.
+- `pollOnce()` checks the mtimes of BOTH `dbPath` and `${dbPath}-wal` via `fs/promises` `stat`.
+  Checking both matters: opencode runs SQLite in WAL mode, so writes touch the `-wal` file and
+  may not touch the main DB file until a checkpoint. Either file missing is not an error — a
+  missing `-wal` file just means no WAL exists yet; treat it as "no mtime". If neither file's
+  mtime has advanced since the last observed value, return without re-reading the DB.
+- On a detected mtime change, re-run `listOpenCodeSessions(dbPath, this.sourceId)` and diff
+  against the in-memory map:
+  - id not present in the map -> store it, index it (non-subagent only), emit
+    `'session-created'` with the session as the sole argument.
+  - id present but `lastActivityAt` differs from the stored session's -> store it, index it,
+    emit `'session-updated'` with the session as the sole argument.
+  - Otherwise no event.
+  After processing, if any newly-seen/changed session is a subagent, re-run the linking pass.
+- Subagent linking mirrors `SourceWatcher.linkSubagents()` (see `server/src/source-watcher.ts`,
+  around line 102): group sessions that have `isSubagent && parentSessionId` by their
+  `parentSessionId`, then attach them to the matching parent session's `subagents` array.
+  `opencode-parser.ts` intentionally leaves `subagents: []` on parents, so this pass is what
+  populates it.
+- `stop()` clears the interval (and is safe to call when never started).
+- Errors from `listOpenCodeSessions` (e.g. DB temporarily locked or missing) must be caught and
+  logged via `console.error` with a `[opencode-watcher:${this.sourceId}]` prefix, matching the
+  logging style in `source-watcher.ts` — the watcher must not crash the process or leave a
+  rejected promise from the interval callback.
 
-The test seeds a temp SQLite DB (via `better-sqlite3`) using the schema from the plan, with
-one `project` row, two `session` rows (a parent and a child whose `parent_id` points at the
-parent), and `message`/`part` rows covering: a `text` part, `tool` parts for `read`,
-`write`, `edit`, and `bash`, plus one `message`/`part` pair with malformed JSON in
-`part.data`.
+**Read `server/src/source-watcher.ts` first** and mirror its structure closely: constructor
+shape, the private `parseAndStore`-style indexing, `linkSubagents()`, event emission, and
+`getAllSessions()`. This new class is deliberately a parallel implementation of the same
+contract.
 
-You may either inline the `CREATE TABLE` strings in the test file or put them in
-`server/test/fixtures/opencode/schema.sql` — pick whichever reads better.
+## Tests (write these FIRST — TDD)
+
+Create `server/test/opencode-watcher.test.ts`. Use `better-sqlite3` directly to seed a temp
+SQLite DB (write it under a temp dir created with `fs.mkdtemp`, named `opencode.db`, and clean
+it up in an `afterEach`/`afterAll`). Look at `server/test/opencode-parser.test.ts` for the exact
+schema shape the parser expects and reuse that seeding approach rather than inventing a new one.
+
+Required cases:
+
+1. **Initial scan** — seed one session row, `await watcher.start()`, assert `getAllSessions()`
+   returns that one session with the expected `id`.
+2. **New session detected** — insert a second session row directly into the DB, then
+   `await watcher.pollOnce()`, and assert a `'session-created'` event fired carrying the new
+   session. (Use `pollOnce()` explicitly — do NOT write a test that sleeps waiting on the real
+   1000ms timer; that is slow and flaky.)
+3. **Updated session detected** — update an existing row's `time_updated` and `title`, then
+   `await watcher.pollOnce()`, and assert a `'session-updated'` event fired for that session.
+
+Note: because `pollOnce()` gates on mtime, the test must ensure the mtime actually advances
+between polls. Filesystem mtime granularity can make two writes within the same millisecond
+look identical — if that causes flakiness, explicitly bump the file mtime (e.g. `fs.utimes`)
+after seeding rather than adding a sleep.
+
+Always `await watcher.stop()` in teardown so vitest does not hang on an open interval.
 
 ## Acceptance criteria
 
-- `server/test/opencode-parser.test.ts` exists and asserts:
-  - `listOpenCodeSessions(dbPath, sourceId)` returns the expected `Session[]` shape — one
-    per `session` row, including the child tagged `isSubagent: true`.
-  - `fileChanges` contains exactly the `read` / `write` / `edit` ops, correctly typed,
-    with `bash` absent.
-  - `toolCalls` contains all 4 tool parts (including `bash`), with `toolUseId`,
-    `toolName`, `input`, `output` populated.
-  - `costUsd` equals the session row's `cost` column.
-  - `hookEvents` and `permissionEvents` are both `[]`.
-  - The child session's `parentSessionId` equals the parent's `id` and `isSubagent` is
-    `true`.
-  - The malformed row does not throw: that session is skipped, other sessions still parse.
-- `cd server && npx vitest run test/opencode-parser.test.ts` passes.
+- `server/test/opencode-watcher.test.ts` exists and covers all three cases above.
+- `cd server && npx vitest run test/opencode-watcher.test.ts` passes.
+- `pnpm --filter @claude-tracker/server test` passes — the WHOLE suite, no regressions.
 - `cd server && npx tsc --noEmit` passes with zero errors.
-- `pnpm lint` passes with zero warnings.
-- The full server suite (`pnpm --filter @claude-tracker/server test`) still passes — no
-  regressions in existing tests.
+- `pnpm lint` passes with **zero** warnings. This repo has a strict zero-warnings policy:
+  unused variables, unused imports, dead code, and unreachable branches are all failures even
+  if the tests pass. Delete anything you wrote and then stopped using.
 
 ## Files in scope
 
-Create only these two files:
+- Create: `server/src/opencode-watcher.ts`
+- Create: `server/test/opencode-watcher.test.ts`
 
-- `server/src/opencode-parser.ts`
-- `server/test/opencode-parser.test.ts`
-- (optional) `server/test/fixtures/opencode/schema.sql`
+## Files out of scope (read for reference only — do NOT modify)
 
-Read for reference, **do not modify**:
-
-- `server/src/parser.ts` — the equivalent parser for Claude Code sessions. Mirror its
-  `FILE_TOOLS` map, status derivation, and per-item try/catch patterns.
-- `server/src/project-key.ts` — `deriveProjectKey`.
-- `server/src/types.ts` — the `Session` / `SessionMessage` / `ToolCallEntry` /
-  `FileChangeEntry` / `ContentBlock` types this parser must produce.
-
-## Files out of scope — do not touch
-
-- `server/src/sources.ts` (already complete)
-- `server/src/registry.ts`, `server/src/source-watcher.ts`, `server/src/routes.ts` —
-  later tasks depend on these staying unchanged for now
-- `server/src/opencode-watcher.ts` — that is a later task; **do not create it**
+- `server/src/source-watcher.ts` — the pattern to mirror
+- `server/src/opencode-parser.ts` — Task 2's output, a finished, verified dependency
+- `server/src/types.ts` — `Session` type
+- `server/src/db.ts` — `TrackerDB` / `indexSession`
+- `server/test/opencode-parser.test.ts` — reference for DB seeding
+- `server/src/registry.ts`, `server/src/routes.ts`, `server/src/sources.ts` — later tasks own these
 - Anything under `client/`
 
 ## Conventions
 
-Follow `/workspace/CLAUDE.md`. Points that most often trip up this repo:
+Follow `/workspace/CLAUDE.md` (repo root) for all project conventions. The ones most likely to
+bite you here:
 
-- TypeScript strict mode with `exactOptionalPropertyTypes` — optional props must include
-  `| undefined` (e.g. `foo?: string | undefined`).
-- `verbatimModuleSyntax` — use `import type` for type-only imports.
-- `noUncheckedIndexedAccess` — index access returns `T | undefined`.
-- Server source imports use `.js` extensions (NodeNext resolution).
-- Test files use **relative** imports (`../src/opencode-parser.ts`) — required for
-  NodeNext, and consistent with every existing file in `server/test/`.
+- TypeScript strict mode with `exactOptionalPropertyTypes` — optional props must be declared
+  `foo?: T | undefined`.
+- `verbatimModuleSyntax` — type-only imports MUST use `import type { ... }`.
+- `noUncheckedIndexedAccess` — indexing an array/record yields `T | undefined`; handle it, do
+  not cast it away.
+- Server imports use `.js` extensions (NodeNext resolution): `import { listOpenCodeSessions }
+  from './opencode-parser.js'`.
+- Test files use relative imports (`../src/opencode-watcher.js`) — that is correct and expected
+  for tests.
+- Do not use `any` or unchecked `as` casts to silence the type checker.
