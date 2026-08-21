@@ -1,5 +1,7 @@
 import type { Project } from '@/types.ts';
 import type { SourceKind } from '@/hooks/useSources.ts';
+import { SourceKindDots } from '@/components/SourceKindDots.tsx';
+import { useSources } from '@/hooks/useSources.ts';
 
 const KIND_LABELS: Record<SourceKind, string> = {
   'claude-code': 'Claude Code',
@@ -22,6 +24,14 @@ export function ProjectList({
   allKinds, enabledKinds, onToggleKind,
   configOpen, onOpenConfig,
 }: Props) {
+  const sources = useSources();
+  const sourceKindById = new Map(sources.map(s => [s.id, s.kind]));
+
+  const getProjectKinds = (project: Project): SourceKind[] =>
+    project.sources
+      .map(id => sourceKindById.get(id))
+      .filter((k): k is SourceKind => k !== undefined);
+
   return (
     <div className="w-48 shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
       <div className="px-4 py-3 border-b border-gray-200 flex items-start justify-between">
@@ -92,11 +102,14 @@ export function ProjectList({
             }`}
           >
             <div className="text-xs font-medium text-gray-800 truncate">{p.name}</div>
-            <div className="text-[11px] text-gray-400 mt-0.5 flex items-center gap-1.5">
-              {p.liveCount > 0 && (
-                <span className="bg-blue-100 text-blue-700 px-1.5 rounded-full">{p.liveCount} live</span>
-              )}
-              <span>· {p.sessionCount} sessions</span>
+            <div className="text-[11px] text-gray-400 mt-0.5 flex items-center justify-between">
+              <div className="flex items-center gap-1.5">
+                {p.liveCount > 0 && (
+                  <span className="bg-blue-100 text-blue-700 px-1.5 rounded-full">{p.liveCount} live</span>
+                )}
+                <span>· {p.sessionCount} sessions</span>
+              </div>
+              <SourceKindDots kinds={getProjectKinds(p)} />
             </div>
           </button>
         ))}
