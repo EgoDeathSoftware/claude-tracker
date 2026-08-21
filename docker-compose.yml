@@ -14,6 +14,8 @@ services:
       - ./server/config:/app/server/config
       - ${CLAUDE_DIR_WINDOWS}:/claude/windows:ro
       - ${CLAUDE_DIR_WSL}:/claude/wsl:ro
+      - ${OPENCODE_DATA_DIR}:/opencode/data:ro
+      - ${OPENCODE_CONFIG_DIR}:/opencode/config:ro
       - tracker-data:/app/data
     environment:
       - DATA_DIR=/app/data
