@@ -1,9 +1,13 @@
 import { useEffect, useState } from 'react';
 
+export type SourceKind = 'claude-code' | 'opencode';
+
 export interface Source {
   id: string;
   name: string;
   path: string;
+  kind: SourceKind;
+  configPath?: string;
 }
 
 export function useSources(): Source[] {

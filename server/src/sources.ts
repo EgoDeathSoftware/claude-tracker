@@ -1,9 +1,13 @@
 import { readFile, stat } from 'node:fs/promises';
 
+export type SourceKind = 'claude-code' | 'opencode';
+
 export interface Source {
   id: string;
   name: string;
   path: string;
+  kind: SourceKind;
+  configPath?: string | undefined;
 }
 
 const ID_PATTERN = /^[a-z0-9_-]+$/;
@@ -30,7 +34,7 @@ export async function loadSources(
       `[sources] ${configPath} not found; `
       + `using single source: ${fallback}`,
     );
-    return [{ id: 'default', name: 'Default', path: fallback }];
+    return [{ id: 'default', name: 'Default', path: fallback, kind: 'claude-code' }];
   }
 
   let parsed: unknown;
@@ -64,7 +68,13 @@ export async function loadSources(
         `[sources] source entry is not an object: ${JSON.stringify(entry)}`,
       );
     }
-    const s = entry as { id?: unknown; name?: unknown; path?: unknown };
+    const s = entry as {
+      id?: unknown;
+      name?: unknown;
+      path?: unknown;
+      kind?: unknown;
+      configPath?: unknown;
+    };
     if (typeof s.id !== 'string' || !ID_PATTERN.test(s.id)) {
       throw new Error(
         `[sources] invalid id (must match [a-z0-9_-]+): ${String(s.id)}`,
@@ -76,11 +86,33 @@ export async function loadSources(
     if (typeof s.path !== 'string' || s.path.length === 0) {
       throw new Error(`[sources] source ${s.id} missing non-empty path`);
     }
+    let kind: SourceKind;
+    if (s.kind === undefined) {
+      kind = 'claude-code';
+    } else if (s.kind === 'claude-code' || s.kind === 'opencode') {
+      kind = s.kind;
+    } else {
+      throw new Error(
+        `[sources] invalid kind (must be "claude-code" or "opencode"): `
+        + `${String(s.kind)}`,
+      );
+    }
+    let configPath: string | undefined;
+    if (s.configPath !== undefined) {
+      if (typeof s.configPath !== 'string' || s.configPath.length === 0) {
+        throw new Error(`[sources] source ${s.id} has invalid configPath`);
+      }
+      configPath = s.configPath;
+    }
     if (seen.has(s.id)) {
       throw new Error(`[sources] duplicate source id: ${s.id}`);
     }
     seen.add(s.id);
-    valid.push({ id: s.id, name: s.name, path: s.path });
+    valid.push(
+      configPath === undefined
+        ? { id: s.id, name: s.name, path: s.path, kind }
+        : { id: s.id, name: s.name, path: s.path, kind, configPath },
+    );
   }
 
   const reachable: Source[] = [];

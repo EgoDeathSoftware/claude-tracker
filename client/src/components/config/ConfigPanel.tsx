@@ -4,9 +4,10 @@ import { ClaudeMdEditor } from '@/components/config/ClaudeMdEditor.tsx';
 import { McpManager } from '@/components/config/McpManager.tsx';
 import { HooksManager } from '@/components/config/HooksManager.tsx';
 import { LlmConfigPanel } from '@/components/config/LlmConfigPanel.tsx';
+import { OpenCodeConfigPanel } from '@/components/config/OpenCodeConfigPanel.tsx';
 import { useSources } from '@/hooks/useSources.ts';
 
-const CONFIG_TABS = [
+const BASE_CONFIG_TABS = [
   { id: 'settings', label: 'Settings' },
   { id: 'claude-md', label: 'CLAUDE.md' },
   { id: 'mcp', label: 'MCP Servers' },
@@ -14,12 +15,20 @@ const CONFIG_TABS = [
   { id: 'ai-summaries', label: 'AI Summaries' },
 ] as const;
 
-type ConfigTab = (typeof CONFIG_TABS)[number]['id'];
+const OPENCODE_TAB = { id: 'opencode', label: 'OpenCode' } as const;
+
+type ConfigTab = (typeof BASE_CONFIG_TABS)[number]['id'] | typeof OPENCODE_TAB.id;
 
 export function ConfigPanel() {
   const [activeTab, setActiveTab] = useState<ConfigTab>('settings');
   const sources = useSources();
   const primary = sources[0];
+  const hasOpenCodeConfig = sources.some(
+    s => s.kind === 'opencode' && s.configPath,
+  );
+  const tabs = hasOpenCodeConfig
+    ? [...BASE_CONFIG_TABS, OPENCODE_TAB]
+    : BASE_CONFIG_TABS;
 
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
@@ -41,7 +50,7 @@ export function ConfigPanel() {
       </div>
 
       <div className="flex border-b border-gray-200 px-2">
-        {CONFIG_TABS.map(tab => (
+        {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
@@ -63,6 +72,7 @@ export function ConfigPanel() {
         {activeTab === 'mcp' && <McpManager />}
         {activeTab === 'hooks' && <HooksManager />}
         {activeTab === 'ai-summaries' && <LlmConfigPanel />}
+        {activeTab === 'opencode' && <OpenCodeConfigPanel />}
       </div>
     </div>
   );

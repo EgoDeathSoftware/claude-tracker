@@ -6,15 +6,12 @@
     "dev": "concurrently \"pnpm --filter @claude-tracker/server dev\" \"pnpm --filter @claude-tracker/client dev\"",
     "build": "pnpm --filter @claude-tracker/server build && pnpm --filter @claude-tracker/client build",
     "typecheck": "pnpm --filter @claude-tracker/server build && pnpm --filter @claude-tracker/client typecheck",
-    "lint": "oxlint client/src server/src",
+    "lint": "oxlint client/src server/src server/test",
     "test": "pnpm --filter @claude-tracker/server test"
   },
   "devDependencies": {
     "concurrently": "9.1.2",
     "oxlint": "0.16.6",
     "vitest": "3.1.2"
-  },
-  "pnpm": {
-    "onlyBuiltDependencies": ["better-sqlite3"]
   }
 }

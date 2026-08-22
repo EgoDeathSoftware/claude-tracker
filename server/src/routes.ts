@@ -1,8 +1,10 @@
 import { Hono } from 'hono';
+import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
 import type { SessionRegistry } from './registry.ts';
 import type { TrackerDB } from './db.ts';
+import type { SourceKind } from './sources.ts';
 import { readRawLines } from './parser.js';
 import {
   readSettings,
@@ -19,6 +21,7 @@ import type { SettingsJson, McpServer } from './config.js';
 import { readLlmConfig, writeLlmConfig } from './llm-config.js';
 import type { LlmConfig } from './llm-config.js';
 import { listModels, testConnection, generateSummary } from './llm.js';
+import { readOpenCodeConfig, listOpenCodeAgents } from './opencode-config.js';
 
 export function buildApp(
   registry: SessionRegistry,
@@ -35,19 +38,48 @@ export function buildApp(
   }
   const primaryClaudeDir = primarySource?.path ?? '';
   const primaryHomeDir = primaryClaudeDir.replace(/\/\.claude$/, '');
+  const primaryOpenCodeSource = sources.find(
+    s => s.kind === 'opencode' && s.configPath,
+  );
 
   app.use('*', cors({ origin: 'http://localhost:5173' }));
 
+  // --- Config: opencode (read-only) - independent of the primarySource gate
+  // below, since Claude Code config and opencode config are separate
+  // surfaces and one being unconfigured shouldn't 503 the other.
+
+  app.get('/api/config/opencode', async c => {
+    if (!primaryOpenCodeSource?.configPath) {
+      return c.json({ error: 'no opencode source configured' }, 503);
+    }
+    return c.json(await readOpenCodeConfig(primaryOpenCodeSource.configPath));
+  });
+
+  app.get('/api/config/opencode/agents', async c => {
+    if (!primaryOpenCodeSource?.configPath) {
+      return c.json({ error: 'no opencode source configured' }, 503);
+    }
+    return c.json(await listOpenCodeAgents(primaryOpenCodeSource.configPath));
+  });
+
   // --- Projects & Sessions ---
 
-  app.get('/api/projects', c => c.json(registry.getProjects()));
+  function parseKinds(c: Context): SourceKind[] | undefined {
+    const kindsParam = c.req.query('kinds');
+    if (!kindsParam) return undefined;
+    return kindsParam.split(',').filter(
+      (k): k is SourceKind => k === 'claude-code' || k === 'opencode',
+    );
+  }
+
+  app.get('/api/projects', c => c.json(registry.getProjects(parseKinds(c))));
 
   app.get('/api/sources', c => c.json(registry.getSources()));
 
   app.get('/api/sessions', c => {
     const projectId = c.req.query('projectId');
     const tag = c.req.query('tag');
-    let sessions = registry.getSessions(projectId);
+    let sessions = registry.getSessions(projectId, parseKinds(c));
     if (tag) {
       const tagSessionIds = new Set(db.getSessionsByTag(tag));
       sessions = sessions.filter(s => tagSessionIds.has(s.id));
@@ -67,6 +99,21 @@ export function buildApp(
     if (!session) return c.json({ error: 'not found' }, 404);
     const offset = Number(c.req.query('offset') ?? '0');
     const limit = Math.min(Number(c.req.query('limit') ?? '200'), 500);
+
+    // opencode has no per-session file to tail - synthesize the same
+    // { lines: [{ lineNumber, content }], total } shape readRawLines
+    // returns, paginating over the already-parsed messages instead.
+    const source = registry.getSources().find(s => s.id === session.sourceId);
+    if (source?.kind === 'opencode') {
+      const total = session.messages.length;
+      const end = Math.min(offset + limit, total);
+      const lines: { lineNumber: number; content: unknown }[] = [];
+      for (let i = offset; i < end; i++) {
+        lines.push({ lineNumber: i + 1, content: session.messages[i] });
+      }
+      return c.json({ lines, total });
+    }
+
     const result = await readRawLines(session.filePath, offset, limit);
     return c.json(result);
   });

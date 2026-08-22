@@ -9,6 +9,13 @@
       "id": "windows",
       "name": "Windows",
       "path": "/mnt/c/Users/YOURUSER/.claude"
+    },
+    {
+      "id": "opencode",
+      "name": "OpenCode",
+      "kind": "opencode",
+      "path": "/home/YOURUSER/.local/share/opencode",
+      "configPath": "/home/YOURUSER/.config/opencode"
     }
   ]
 }

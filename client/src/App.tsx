@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import { ProjectList } from '@/components/ProjectList.tsx';
 import { SessionList } from '@/components/SessionList.tsx';
 import { SessionDetail } from '@/components/SessionDetail.tsx';
@@ -8,6 +8,8 @@ import { ConfigPanel } from '@/components/config/ConfigPanel.tsx';
 import { useProjects } from '@/hooks/useProjects.ts';
 import { useSessions } from '@/hooks/useSessions.ts';
 import { useSSE } from '@/hooks/useSSE.ts';
+import { useSources } from '@/hooks/useSources.ts';
+import type { SourceKind } from '@/hooks/useSources.ts';
 import type { Session } from '@/types.ts';
 
 export default function App() {
@@ -22,9 +24,28 @@ export default function App() {
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [configOpen, setConfigOpen] = useState(false);
 
-  const { projects, refresh } = useProjects();
+  const sources = useSources();
+  const allKinds = useMemo(
+    () => [...new Set(sources.map(s => s.kind))],
+    [sources],
+  );
+  // null = "not yet toggled by the user" - falls back to allKinds, so a
+  // newly-configured source kind shows up enabled by default.
+  const [enabledKinds, setEnabledKinds] = useState<SourceKind[] | null>(null);
+  const effectiveKinds = enabledKinds ?? allKinds;
+  const toggleKind = (kind: SourceKind) => {
+    setEnabledKinds(prev => {
+      const base = prev ?? allKinds;
+      return base.includes(kind)
+        ? base.filter(k => k !== kind)
+        : [...base, kind];
+    });
+  };
+
+  const { projects, refresh } = useProjects(effectiveKinds);
   const { sessions, setSessions } = useSessions(
     selectedProjectId ?? undefined,
+    effectiveKinds,
   );
 
   const handleCreated = useCallback(
@@ -72,6 +93,9 @@ export default function App() {
             setSelectedSessionId(null);
             setConfigOpen(false);
           }}
+          allKinds={allKinds}
+          enabledKinds={effectiveKinds}
+          onToggleKind={toggleKind}
           configOpen={configOpen}
           onOpenConfig={() => {
             setConfigOpen(!configOpen);

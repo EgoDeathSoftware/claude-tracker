@@ -15,6 +15,14 @@ The tracker can watch multiple `.claude` directories (e.g. WSL and Windows on th
 
 Without a `sources.json`, the tracker falls back to the `CLAUDE_DIR` env var (or `~/.claude`) as a single source.
 
+Sources also carry a `kind` (`claude-code` | `opencode`, defaults to `claude-code`). An opencode source reads
+sessions directly from opencode's own SQLite DB (`~/.local/share/opencode/opencode.db`) instead of watching
+JSONL files, and needs an additional `configPath` pointing at `~/.config/opencode` to enable the read-only
+OpenCode config tab. See the `opencode` entry in `sources.example.json`. The left sidebar shows a "Claude
+Code" / "OpenCode" checkbox pair (only when more than one kind is configured) to filter the project/session
+list by kind; the same filter is available server-side via `?kinds=claude-code,opencode` on `GET
+/api/projects` and `GET /api/sessions`.
+
 ## Key Conventions
 
 - TypeScript strict mode with `exactOptionalPropertyTypes` — optional props must include `| undefined` (e.g., `foo?: string | undefined`)
@@ -43,30 +51,42 @@ cd client && npx tsc --noEmit --allowImportingTsExtensions  # Client typecheck
 
 - `server/src/parser.ts` — Core JSONL parsing. Extracts messages, tool calls, file changes, hooks, permissions, subagents. `parseSession(filePath, sourceId, dirName)` derives `projectId` via `deriveProjectKey(cwd, sourceId, dirName)`.
 - `server/src/project-key.ts` — Pure utilities for project identity: `basenameOf`, `deriveProjectKey` (lowercased basename of cwd, or `<sourceId>:<dirName>` fallback), `displayNameFromCwd` (casing-preserving display name).
-- `server/src/sources.ts` — Loads `server/config/sources.json` (with `CLAUDE_DIR` env-var fallback), validates entries, skips unreachable paths. Exports `Source` interface.
-- `server/src/source-watcher.ts` — Per-source `SourceWatcher` class. One instance per configured `.claude` directory. Scans existing JSONL files, watches via chokidar, links subagents within the source, tags every parsed `Session` with its `sourceId`.
-- `server/src/registry.ts` — `SessionRegistry` aggregator. Owns one `SourceWatcher` per source, ingests their sessions into a unified map, groups projects by basename slug across sources, handles session-id collisions, re-emits SSE events.
+- `server/src/sources.ts` — Loads `server/config/sources.json` (with `CLAUDE_DIR` env-var fallback), validates entries, skips unreachable paths. Exports `Source`/`SourceKind` interfaces.
+- `server/src/source-watcher.ts` — Per-source `SourceWatcher` class for `kind: 'claude-code'` sources. Scans existing JSONL files, watches via chokidar, links subagents within the source, tags every parsed `Session` with its `sourceId`.
+- `server/src/opencode-parser.ts` — `listOpenCodeSessions(dbPath, sourceId)`: reads opencode's own SQLite DB (session/message/part tables — `part` is a *separate* table keyed by `message_id`, not embedded in `message.data`) and maps rows to the same `Session` shape `parser.ts` produces.
+- `server/src/opencode-watcher.ts` — `OpenCodeWatcher` class for `kind: 'opencode'` sources. Polls `opencode.db` and its `-wal` file's mtime instead of watching a directory; `pollOnce()` is public for deterministic tests.
+- `server/src/opencode-config.ts` — Read-only `readOpenCodeConfig`/`listOpenCodeAgents` for opencode's own `opencode.json` (JSONC — comments are stripped with a string-literal-aware scanner, not a naive regex) and agent markdown files.
+- `server/src/registry.ts` — `SessionRegistry` aggregator. `createWatcher(source, db)` dispatches to `SourceWatcher` or `OpenCodeWatcher` by `source.kind`; both satisfy a shared `AgentWatcher` interface. Ingests all watchers' sessions into a unified map, groups projects by basename slug across sources, handles session-id collisions, filters by `kinds` in `getProjects`/`getSessions`, re-emits SSE events.
 - `server/src/db.ts` — SQLite with better-sqlite3. FTS5 search, tags, prompts. `SCHEMA_VERSION` + `maybeRebuildFts()` runs on construction; rebuilds the FTS table on schema bump.
 - `server/src/config.ts` — Read/write for settings.json, .claude.json, CLAUDE.md, hook scripts.
-- `server/src/routes.ts` — All API endpoints. `buildApp(registry, db)`. Config-management routes (`/api/config/*`) target the first configured source and 503 when no source exists. Includes `GET /api/sources`.
+- `server/src/routes.ts` — All API endpoints. `buildApp(registry, db)`. `?kinds=` filters `/api/projects`/`/api/sessions`. `/api/sessions/:id/raw` branches by source kind (tails the JSONL file for claude-code, synthesizes a paginated transcript from already-parsed messages for opencode). Config-management routes (`/api/config/*`) target the first configured source and 503 when no source exists; the opencode config routes are registered separately so they work independent of that gate. Includes `GET /api/sources`.
 - `server/src/index.ts` — Server entrypoint. Loads sources via `loadSources`, starts `SessionRegistry`, starts Hono server.
 - `server/src/pricing.ts` — Model pricing table and cost computation.
-- `client/src/App.tsx` — Root component. Manages project/session selection, config mode, compare mode.
-- `client/src/hooks/useSources.ts` — Fetches `/api/sources` once on mount; consumed by `SessionList` (per-session badge) and `ConfigPanel` (active-source label).
-- `client/src/components/SessionList.tsx` — Renders a small source badge next to each session when more than one source is configured.
+- `client/src/App.tsx` — Root component. Manages project/session selection, config mode, compare mode, `enabledKinds` filter state.
+- `client/src/hooks/useSources.ts` — Fetches `/api/sources` once on mount; exports `SourceKind`. Consumed by `SessionList` (per-session badge), `ConfigPanel` (active-source label, OpenCode tab visibility), `ProjectList` (kind checkboxes).
+- `client/src/components/SessionList.tsx` — Renders a small source badge (with a kind-colored dot) next to each session when more than one source is configured.
+- `client/src/components/ProjectList.tsx` — Renders the "Claude Code" / "OpenCode" filter checkboxes below the project count, only when more than one kind is configured.
 - `client/src/components/SessionDetail.tsx` — 7-tab detail view (Conversation, Tools, Files, Costs, Hooks, Agents, Raw Log).
-- `client/src/components/config/ConfigPanel.tsx` — 4-tab config editor (Settings, CLAUDE.md, MCP, Hooks). Header shows "Editing: \<source name\>".
+- `client/src/components/config/ConfigPanel.tsx` — Config editor tab bar (Settings, CLAUDE.md, MCP, Hooks, AI Summaries, and a read-only OpenCode tab shown only when an opencode source with `configPath` is configured). Header shows "Editing: \<source name\>".
+- `client/src/components/config/OpenCodeConfigPanel.tsx` — Read-only render of opencode's `opencode.json` and agent markdown files; no save wiring.
 
 ## Testing
 
-Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest run`. Total: 67 tests across 6 files.
+Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest run`. Total: 127 tests across 13 files.
 
-- `parser.test.ts` — 36 tests covering all JSONL record types, tool extraction, file changes, hooks, permissions, subagents, raw lines.
+- `parser.test.ts` — 38 tests covering all JSONL record types, tool extraction, file changes, hooks, permissions, subagents, raw lines.
 - `project-key.test.ts` — 13 tests for path basename extraction, cross-platform merging, and fallback behavior.
-- `sources.test.ts` — 8 tests for the config loader: happy path, env-var fallback, unreachable-source skip, duplicate ids, invalid ids, malformed JSON, non-array roots, null root.
+- `sources.test.ts` — 10 tests for the config loader: happy path, env-var fallback, unreachable-source skip, duplicate ids, invalid ids, malformed JSON, non-array roots, null root, `kind`/`configPath` validation.
 - `source-watcher.test.ts` — 2 tests for per-source subagent scanning and linking.
-- `registry.test.ts` — 5 tests for cross-source merging, single-source grouping, no-cwd fallback, case-insensitive basenames, and unreachable-source resilience.
+- `opencode-parser.test.ts` — 14 tests: SQLite row → `Session` mapping against the real (verified-live) schema, file-op tool mapping, malformed-row/malformed-part resilience, subagent linking via `parent_id`, `logEntries` population.
+- `opencode-watcher.test.ts` — 7 tests for polling: initial scan doesn't emit, `pollOnce()` detects new/changed sessions, no re-emit when unchanged, subagent linking, missing-DB resilience, clean `stop()`.
+- `opencode-config.test.ts` — 7 tests for the read-only config readers, including the JSONC string-literal-vs-comment edge case (`"https://..."` must not be treated as a comment).
+- `registry.test.ts` — 7 tests for cross-source merging, single-source grouping, no-cwd fallback, case-insensitive basenames, unreachable-source resilience, `kind`-based watcher dispatch, and `kinds` filtering.
+- `routes.test.ts` — 6 tests for `?kinds=` filtering, the raw-log kind branch, and opencode config 503/200 paths, via Hono's `app.request()`.
 - `multi-source.integration.test.ts` — 3 tests using committed fixtures under `server/test/fixtures/sources/{wsl,windows}/` to exercise end-to-end merge of WSL + Windows sessions.
+- `multi-agent.integration.test.ts` — 4 tests merging a committed claude-code JSONL fixture with a seeded opencode SQLite fixture (`server/test/fixtures/opencode/seed.ts`) into one project, and filtering by kind.
+- `llm.test.ts` — 11 tests for the LLM client (model listing, connection testing, summary generation).
+- `llm-config.test.ts` — 5 tests for the LLM config reader/writer, including malformed-JSON fallback.
 
 Test files use relative imports (`../src/parser.ts`) which is necessary for NodeNext module resolution. A pre-tool hook blocks relative imports in source files but test files require them.
 
@@ -76,3 +96,4 @@ Test files use relative imports (`../src/parser.ts`) which is necessary for Node
 - Docker mounts `CLAUDE_DIR` as read-only. Config management endpoints write to the host filesystem, not the container — this only works in local dev or with the volume mounted read-write.
 - Session status (live/waiting/done) is derived from file mtime, not from the JSONL content.
 - The `pnpm-lock.yaml` is at the workspace root. Always run `pnpm install` from the root.
+- Do NOT install dependencies or run `pnpm dev`/`pnpm build`/`pnpm test`/etc. locally — `pnpm` isn't set up on the host. The dev container (`docker compose up`, service `app`) is the only place these commands run; it mounts `client/src`, `server/src`, `server/test`, and `server/config` read-write for live reload, so edits made on the host are picked up automatically by the already-running container. Verify UI changes through the container's exposed ports (5173 client, 3001 server) rather than starting a second local dev server.

@@ -13,8 +13,8 @@ describe('multi-source integration', () => {
 
   beforeAll(async () => {
     const sources: Source[] = [
-      { id: 'wsl', name: 'WSL', path: join(FIXTURES, 'wsl') },
-      { id: 'windows', name: 'Windows', path: join(FIXTURES, 'windows') },
+      { id: 'wsl', name: 'WSL', path: join(FIXTURES, 'wsl'), kind: 'claude-code' },
+      { id: 'windows', name: 'Windows', path: join(FIXTURES, 'windows'), kind: 'claude-code' },
     ];
     registry = new SessionRegistry(sources);
     await registry.start();

@@ -35,8 +35,8 @@ describe('loadSources', () => {
     );
     const out = await loadSources(cfg, undefined);
     expect(out).toEqual([
-      { id: 'wsl', name: 'WSL', path: src1 },
-      { id: 'windows', name: 'Windows', path: src2 },
+      { id: 'wsl', name: 'WSL', path: src1, kind: 'claude-code' },
+      { id: 'windows', name: 'Windows', path: src2, kind: 'claude-code' },
     ]);
   });
 
@@ -46,7 +46,7 @@ describe('loadSources', () => {
     const missing = join(dir, 'nope.json');
     const out = await loadSources(missing, '/tmp/fake-claude');
     expect(out).toEqual([
-      { id: 'default', name: 'Default', path: '/tmp/fake-claude' },
+      { id: 'default', name: 'Default', path: '/tmp/fake-claude', kind: 'claude-code' },
     ]);
   });
 
@@ -79,6 +79,50 @@ describe('loadSources', () => {
     } finally {
       warnSpy.mockRestore();
     }
+  });
+
+  it('loads a source with kind "opencode" and configPath', async () => {
+    const dir = await makeTmp();
+    cleanup.push(dir);
+    const src = join(dir, 'oc');
+    const cfgDir = join(dir, 'oc-config');
+    await mkdir(src);
+    await mkdir(cfgDir);
+    const cfg = join(dir, 'sources.json');
+    await writeFile(
+      cfg,
+      JSON.stringify({
+        sources: [
+          {
+            id: 'oc',
+            name: 'OpenCode',
+            kind: 'opencode',
+            path: src,
+            configPath: cfgDir,
+          },
+        ],
+      }),
+    );
+    const out = await loadSources(cfg, undefined);
+    expect(out).toEqual([
+      { id: 'oc', name: 'OpenCode', path: src, kind: 'opencode', configPath: cfgDir },
+    ]);
+  });
+
+  it('throws on invalid kind', async () => {
+    const dir = await makeTmp();
+    cleanup.push(dir);
+    const a = join(dir, 'a');
+    await mkdir(a);
+    const cfg = join(dir, 'sources.json');
+    await writeFile(
+      cfg,
+      JSON.stringify({
+        sources: [{ id: 'x', name: 'A', kind: 'bogus', path: a }],
+      }),
+    );
+    await expect(loadSources(cfg, undefined))
+      .rejects.toThrow(/invalid kind/);
   });
 
   it('throws on duplicate ids', async () => {

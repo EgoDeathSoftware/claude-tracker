@@ -5,6 +5,7 @@ import { formatRelative } from '@/lib/format.ts';
 import { useSearch } from '@/hooks/useSearch.ts';
 import { useAllTags } from '@/hooks/useTags.ts';
 import { useSources } from '@/hooks/useSources.ts';
+import { SourceKindDots } from '@/components/SourceKindDots.tsx';
 import type { Session } from '@/types.ts';
 
 interface Props {
@@ -29,7 +30,7 @@ export function SessionList({
   const { results, loading, search, clear } = useSearch(projectId);
   const allTags = useAllTags();
   const sources = useSources();
-  const sourceNameById = new Map(sources.map(s => [s.id, s.name]));
+  const sourceById = new Map(sources.map(s => [s.id, s]));
   const [filterTag, setFilterTag] = useState<string | null>(null);
 
   const displayed = filterTag
@@ -90,48 +91,54 @@ export function SessionList({
             No sessions found
           </div>
         )}
-        {displayed.map(s => (
-          <button
-            key={s.id}
-            onClick={() => {
-              if (compareMode && onToggleCompare) {
-                onToggleCompare(s.id);
-              } else {
-                onSelect(s.id);
-              }
-            }}
-            className={`w-full text-left px-4 py-3 border-b
-              border-gray-100 ${
-              selectedId === s.id ? 'bg-blue-50' : 'hover:bg-gray-50'
-            } ${
-              compareMode && compareIds?.includes(s.id)
-                ? 'ring-2 ring-inset ring-indigo-400'
-                : ''
-            }`}
-          >
-            <div className="flex items-center justify-between mb-1">
-              <div className="flex items-center gap-1.5">
-                <StatusBadge status={s.status} />
-                {sources.length > 1 && sourceNameById.has(s.sourceId) && (
-                  <span className="px-1.5 py-0.5 rounded text-[9px]
-                    font-medium bg-gray-100 text-gray-600 uppercase
-                    tracking-wide">
-                    {sourceNameById.get(s.sourceId)}
-                  </span>
-                )}
+        {displayed.map(s => {
+          const source = sourceById.get(s.sourceId);
+          return (
+            <button
+              key={s.id}
+              onClick={() => {
+                if (compareMode && onToggleCompare) {
+                  onToggleCompare(s.id);
+                } else {
+                  onSelect(s.id);
+                }
+              }}
+              className={`w-full text-left px-4 py-3 border-b
+                border-gray-100 ${
+                selectedId === s.id ? 'bg-blue-50' : 'hover:bg-gray-50'
+              } ${
+                compareMode && compareIds?.includes(s.id)
+                  ? 'ring-2 ring-inset ring-indigo-400'
+                  : ''
+              }`}
+            >
+              <div className="flex items-center justify-between mb-1">
+                <div className="flex items-center gap-1.5">
+                  <StatusBadge status={s.status} />
+                  {sources.length > 1 && source && (
+                    <>
+                      <SourceKindDots kinds={[source.kind]} />
+                      <span className="px-1.5 py-0.5 rounded text-[9px]
+                        font-medium bg-gray-100 text-gray-600 uppercase
+                        tracking-wide">
+                        {source.name}
+                      </span>
+                    </>
+                  )}
+                </div>
+                <span className="text-[10px] text-gray-400">
+                  {formatRelative(s.lastActivityAt)}
+                </span>
               </div>
-              <span className="text-[10px] text-gray-400">
-                {formatRelative(s.lastActivityAt)}
-              </span>
-            </div>
-            <div className="text-xs font-medium text-gray-800 truncate">
-              {s.title}
-            </div>
-            <div className="text-[11px] text-gray-400 mt-0.5">
-              {s.turnCount} turns
-            </div>
-          </button>
-        ))}
+              <div className="text-xs font-medium text-gray-800 truncate">
+                {s.title}
+              </div>
+              <div className="text-[11px] text-gray-400 mt-0.5">
+                {s.turnCount} turns
+              </div>
+            </button>
+          );
+        })}
       </div>
     </div>
   );
