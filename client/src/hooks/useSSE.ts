@@ -13,6 +13,9 @@ export function useSSE(onCreated: SSEHandler, onUpdated: SSEHandler) {
     es.addEventListener('session-updated', e => {
       onUpdated(JSON.parse((e as MessageEvent<string>).data) as Session);
     });
+    es.addEventListener('sources-changed', () => {
+      window.dispatchEvent(new Event('tracker:sources-changed'));
+    });
 
     return () => es.close();
   }, [onCreated, onUpdated]);

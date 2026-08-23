@@ -1,11 +1,16 @@
 import type { Project } from '@/types.ts';
-import type { SourceKind } from '@/hooks/useSources.ts';
+import type { SourceKind, SourceLocation } from '@/hooks/useSources.ts';
 import { SourceKindDots } from '@/components/SourceKindDots.tsx';
 import { useSources } from '@/hooks/useSources.ts';
 
 const KIND_LABELS: Record<SourceKind, string> = {
   'claude-code': 'Claude Code',
   'opencode': 'OpenCode',
+};
+
+const LOCATION_LABELS: Record<SourceLocation, string> = {
+  host: 'Host',
+  container: 'Containers',
 };
 
 interface Props {
@@ -15,6 +20,9 @@ interface Props {
   allKinds: SourceKind[];
   enabledKinds: SourceKind[];
   onToggleKind: (kind: SourceKind) => void;
+  allLocations: SourceLocation[];
+  enabledLocations: SourceLocation[];
+  onToggleLocation: (location: SourceLocation) => void;
   configOpen: boolean;
   onOpenConfig: () => void;
 }
@@ -22,6 +30,7 @@ interface Props {
 export function ProjectList({
   projects, selectedId, onSelect,
   allKinds, enabledKinds, onToggleKind,
+  allLocations, enabledLocations, onToggleLocation,
   configOpen, onOpenConfig,
 }: Props) {
   const sources = useSources();
@@ -80,6 +89,20 @@ export function ProjectList({
                 onChange={() => onToggleKind(kind)}
               />
               {KIND_LABELS[kind]}
+            </label>
+          ))}
+        </div>
+      )}
+      {allLocations.length > 1 && (
+        <div className="flex gap-3 px-4 py-1.5 border-b border-gray-100 text-[11px]">
+          {allLocations.map(location => (
+            <label key={location} className="flex items-center gap-1 text-gray-600">
+              <input
+                type="checkbox"
+                checked={enabledLocations.includes(location)}
+                onChange={() => onToggleLocation(location)}
+              />
+              {LOCATION_LABELS[location]}
             </label>
           ))}
         </div>

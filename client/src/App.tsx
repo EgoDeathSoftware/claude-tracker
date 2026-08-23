@@ -9,7 +9,7 @@ import { useProjects } from '@/hooks/useProjects.ts';
 import { useSessions } from '@/hooks/useSessions.ts';
 import { useSSE } from '@/hooks/useSSE.ts';
 import { useSources } from '@/hooks/useSources.ts';
-import type { SourceKind } from '@/hooks/useSources.ts';
+import type { SourceKind, SourceLocation } from '@/hooks/useSources.ts';
 import type { Session } from '@/types.ts';
 
 export default function App() {
@@ -42,10 +42,28 @@ export default function App() {
     });
   };
 
-  const { projects, refresh } = useProjects(effectiveKinds);
+  const allLocations = useMemo(
+    () => [...new Set(sources.map(s => s.location))],
+    [sources],
+  );
+  // null = "not yet toggled by the user" - falls back to allLocations, so a
+  // newly-appearing location shows up enabled by default.
+  const [enabledLocations, setEnabledLocations] = useState<SourceLocation[] | null>(null);
+  const effectiveLocations = enabledLocations ?? allLocations;
+  const toggleLocation = (location: SourceLocation) => {
+    setEnabledLocations(prev => {
+      const base = prev ?? allLocations;
+      return base.includes(location)
+        ? base.filter(l => l !== location)
+        : [...base, location];
+    });
+  };
+
+  const { projects, refresh } = useProjects(effectiveKinds, effectiveLocations);
   const { sessions, setSessions } = useSessions(
     selectedProjectId ?? undefined,
     effectiveKinds,
+    effectiveLocations,
   );
 
   const handleCreated = useCallback(
@@ -96,6 +114,9 @@ export default function App() {
           allKinds={allKinds}
           enabledKinds={effectiveKinds}
           onToggleKind={toggleKind}
+          allLocations={allLocations}
+          enabledLocations={effectiveLocations}
+          onToggleLocation={toggleLocation}
           configOpen={configOpen}
           onOpenConfig={() => {
             setConfigOpen(!configOpen);
