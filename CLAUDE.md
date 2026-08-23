@@ -72,12 +72,12 @@ cd client && npx tsc --noEmit --allowImportingTsExtensions  # Client typecheck
 
 ## Testing
 
-Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest run`. Total: 127 tests across 13 files.
+Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest run`. Total: 130 tests across 13 files.
 
 - `parser.test.ts` — 38 tests covering all JSONL record types, tool extraction, file changes, hooks, permissions, subagents, raw lines.
 - `project-key.test.ts` — 13 tests for path basename extraction, cross-platform merging, and fallback behavior.
 - `sources.test.ts` — 10 tests for the config loader: happy path, env-var fallback, unreachable-source skip, duplicate ids, invalid ids, malformed JSON, non-array roots, null root, `kind`/`configPath` validation.
-- `source-watcher.test.ts` — 2 tests for per-source subagent scanning and linking.
+- `source-watcher.test.ts` — 5 tests for per-source subagent scanning/linking and the `watch`/`transformSession` constructor options.
 - `opencode-parser.test.ts` — 14 tests: SQLite row → `Session` mapping against the real (verified-live) schema, file-op tool mapping, malformed-row/malformed-part resilience, subagent linking via `parent_id`, `logEntries` population.
 - `opencode-watcher.test.ts` — 7 tests for polling: initial scan doesn't emit, `pollOnce()` detects new/changed sessions, no re-emit when unchanged, subagent linking, missing-DB resilience, clean `stop()`.
 - `opencode-config.test.ts` — 7 tests for the read-only config readers, including the JSONC string-literal-vs-comment edge case (`"https://..."` must not be treated as a comment).

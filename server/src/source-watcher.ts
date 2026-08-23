@@ -6,26 +6,38 @@ import { parseSession } from './parser.js';
 import type { TrackerDB } from './db.js';
 import type { Session } from './types.js';
 
+export interface SourceWatcherOptions {
+  /** Start a filesystem watcher for live updates. Defaults to true. */
+  watch?: boolean | undefined;
+  /** Applied to every parsed session before it is stored or emitted. */
+  transformSession?: ((session: Session) => Session) | undefined;
+}
+
 export class SourceWatcher extends EventEmitter {
   private sessions = new Map<string, Session>();
   private projectsDir: string;
   private watcher: ReturnType<typeof watch> | null = null;
   private db: TrackerDB | null;
+  private readonly watchEnabled: boolean;
+  private readonly transformSession: (session: Session) => Session;
 
   constructor(
     public readonly sourceId: string,
     private readonly claudeDir: string,
     db?: TrackerDB,
+    options?: SourceWatcherOptions,
   ) {
     super();
     this.projectsDir = join(claudeDir, 'projects');
     this.db = db ?? null;
+    this.watchEnabled = options?.watch ?? true;
+    this.transformSession = options?.transformSession ?? (s => s);
   }
 
   async start(): Promise<void> {
     await this.scanExisting();
     this.linkSubagents();
-    await this.watchDir();
+    if (this.watchEnabled) await this.watchDir();
   }
 
   private dirNameFromPath(filePath: string): string {
@@ -82,11 +94,12 @@ export class SourceWatcher extends EventEmitter {
     dirName: string,
   ): Promise<void> {
     try {
-      const session = await parseSession(
+      const parsed = await parseSession(
         filePath,
         this.sourceId,
         dirName,
       );
+      const session = this.transformSession(parsed);
       this.sessions.set(session.id, session);
       if (this.db && !session.isSubagent) {
         this.db.indexSession(session);
@@ -188,7 +201,7 @@ export class SourceWatcher extends EventEmitter {
     eventName: 'session-created' | 'session-updated',
   ): Promise<void> {
     const dirName = this.dirNameFromPath(filePath);
-    const session = await parseSession(
+    const parsed = await parseSession(
       filePath,
       this.sourceId,
       dirName,
@@ -199,7 +212,8 @@ export class SourceWatcher extends EventEmitter {
       );
       return null;
     });
-    if (!session) return;
+    if (!parsed) return;
+    const session = this.transformSession(parsed);
     this.sessions.set(session.id, session);
 
     if (session.isSubagent) {
