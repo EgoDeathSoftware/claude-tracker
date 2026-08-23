@@ -3,6 +3,7 @@ import { SourceWatcher } from './source-watcher.js';
 import type { SourceWatcherOptions } from './source-watcher.js';
 import { OpenCodeWatcher } from './opencode-watcher.js';
 import { StoreSetWatcher } from './store-set-watcher.js';
+import type { StoreSetWatcherOptions } from './store-set-watcher.js';
 import { applyOrigin } from './store-origin.js';
 import type { TrackerDB } from './db.js';
 import type { Session, Project } from './types.js';
@@ -44,6 +45,7 @@ export class SessionRegistry extends EventEmitter {
   constructor(
     private sources: Source[],
     db?: TrackerDB,
+    private readonly storeSetOptions?: StoreSetWatcherOptions,
   ) {
     super();
     this.db = db ?? null;
@@ -108,7 +110,7 @@ export class SessionRegistry extends EventEmitter {
       source => new StoreSetWatcher(source, {
         addSource: (child, opts) => this.addSource(child, opts),
         removeSource: id => this.removeSource(id),
-      }),
+      }, this.storeSetOptions),
     );
     const storeSetResults = await Promise.allSettled(this.storeSets.map(w => w.start()));
     storeSetResults.forEach((r, i) => {

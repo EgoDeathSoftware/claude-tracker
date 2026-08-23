@@ -14,6 +14,21 @@ const dataDir = process.env['DATA_DIR']
   ?? join(process.env['HOME'] ?? '.', '.claude', 'tracker');
 const port = Number(process.env['PORT'] ?? 3001);
 
+/** Parses an optional numeric env var, warning and falling back on a malformed value. */
+function parseOptionalNumberEnv(name: string): number | undefined {
+  const raw = process.env[name];
+  if (raw === undefined) return undefined;
+  const parsed = Number(raw);
+  if (Number.isNaN(parsed)) {
+    console.warn(`[server] ignoring invalid ${name} "${raw}"; using the default`);
+    return undefined;
+  }
+  return parsed;
+}
+
+const storeActiveDays = parseOptionalNumberEnv('STORE_ACTIVE_DAYS');
+const storePollMs = parseOptionalNumberEnv('STORE_POLL_MS');
+
 const sources = await loadSources(
   sourcesConfigPath,
   process.env['CLAUDE_DIR'],
@@ -26,7 +41,9 @@ if (sources.length === 0) {
 }
 
 const db = new TrackerDB(join(dataDir, 'tracker.db'));
-const registry = new SessionRegistry(sources, db);
+const registry = new SessionRegistry(
+  sources, db, { activeDays: storeActiveDays, pollMs: storePollMs },
+);
 await registry.start();
 startAutoSummarizePoller(registry, db, llmConfigPath);
 
