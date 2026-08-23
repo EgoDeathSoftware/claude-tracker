@@ -1,5 +1,5 @@
-import { describe, it, expect } from 'vitest';
-import { mkdtemp, mkdir, writeFile } from 'node:fs/promises';
+import { describe, it, expect, afterEach } from 'vitest';
+import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -12,9 +12,17 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 const STORES = join(__dirname, 'fixtures', 'agent-stores');
 
+const cleanup: string[] = [];
+afterEach(async () => {
+  for (const d of cleanup.splice(0)) {
+    await rm(d, { recursive: true, force: true });
+  }
+});
+
 /** A host .claude dir whose session ran in the same folder the container did. */
 async function makeHostSource(): Promise<Source> {
   const dir = await mkdtemp(join(tmpdir(), 'host-claude-'));
+  cleanup.push(dir);
   const projectDir = join(dir, 'projects', '-home-dave-Projects-CAT-AI-agent-shell');
   await mkdir(projectDir, { recursive: true });
   await writeFile(join(projectDir, 'host-a.jsonl'), JSON.stringify({
@@ -43,6 +51,8 @@ describe('container session ingestion', () => {
     expect(agentShell).toBeDefined();
     expect(agentShell!.sessionCount).toBe(2);
     expect(agentShell!.sources.sort()).toEqual(['agents:vercel.ai', 'wsl']);
+    expect(registry.getSessions('agent-shell').map(s => s.id).sort())
+      .toEqual(['container-a', 'host-a']);
 
     await registry.stop();
   });
@@ -85,7 +95,9 @@ describe('container session ingestion', () => {
     const registry = new SessionRegistry([storeSet]);
     await registry.start();
     const session = registry.getSession('container-a');
-    expect(session?.filePath).toContain('agent-stores/vercel.ai');
+    expect(session?.filePath).toBe(
+      join(STORES, 'vercel.ai', 'projects', '-workspace', 'container-a.jsonl'),
+    );
     await registry.stop();
   });
 });
