@@ -1,0 +1,8 @@
+{
+  "container": "vercel.ai",
+  "image": "ai-agent:latest",
+  "hostWorkspace": "/home/dave/Projects/CAT_AI/agent-shell",
+  "workspaceMount": "/workspace",
+  "host": "wsl-debian",
+  "updatedAt": "2026-08-21T22:14:03+01:00"
+}
