@@ -71,10 +71,14 @@ export class SessionRegistry extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    // A store-set source has no .claude directory of its own — source.path is
+    // the parent of many stores — so it never gets an ordinary watcher.
+    // getSources() must not surface it either, hence trimming this.sources.
     const storeSetSources = this.sources.filter(s => s.layout === 'store-set');
-    this.sources = this.sources.filter(s => s.layout !== 'store-set');
+    const ordinarySources = this.sources.filter(s => s.layout !== 'store-set');
+    this.sources = ordinarySources;
 
-    for (const source of this.sources) {
+    for (const source of ordinarySources) {
       this.watchers.set(
         source.id,
         createWatcher(source, this.db ?? undefined, this.watcherOptions(source, true)),
@@ -106,10 +110,22 @@ export class SessionRegistry extends EventEmitter {
         removeSource: id => this.removeSource(id),
       }),
     );
-    await Promise.allSettled(this.storeSets.map(w => w.start()));
+    const storeSetResults = await Promise.allSettled(this.storeSets.map(w => w.start()));
+    storeSetResults.forEach((r, i) => {
+      if (r.status === 'rejected') {
+        console.warn(
+          `[registry] store-set "${storeSetSources[i]!.id}" failed to start:`,
+          r.reason,
+        );
+      }
+    });
   }
 
   async stop(): Promise<void> {
+    // Store-sets must stop first: this halts their polling before the
+    // watcher-map snapshot below is taken, so a poll tick can't register a
+    // new child watcher (via addSource) that this stop() call would then
+    // miss and leak.
     await Promise.allSettled(this.storeSets.map(w => w.stop()));
     await Promise.allSettled([...this.watchers.values()].map(w => w.stop()));
   }
@@ -144,7 +160,13 @@ export class SessionRegistry extends EventEmitter {
     this.emit('sources-changed');
   }
 
-  /** Deregister a source and drop the sessions it contributed. */
+  /**
+   * Deregister a source and drop the sessions it contributed. Callers must
+   * not remove a source with `parentId` set except through its owning
+   * StoreSetWatcher — that watcher's own `known` state wouldn't learn of an
+   * external removal, so the store would silently stay gone until its
+   * container relaunches and rewrites its marker.
+   */
   async removeSource(id: string): Promise<void> {
     const watcher = this.watchers.get(id);
     if (!watcher) return;

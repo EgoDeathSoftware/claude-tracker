@@ -581,7 +581,10 @@ describe('store-set sources', () => {
     await registry.stop();
   });
 
-  it('does not create a SourceWatcher for the store-set parent itself', async () => {
+  // Indirect check: there's no public accessor for the watchers map, so this
+  // confirms the parent id never surfaces via getSources() rather than
+  // asserting directly that no AgentWatcher was constructed for it.
+  it('excludes the store-set parent from getSources() and the ordinary watcher loop', async () => {
     const root = await mkdtemp(join(tmpdir(), 'registry-parent-'));
     const registry = new SessionRegistry([{
       id: 'agents', name: 'Agent Containers', path: root,
