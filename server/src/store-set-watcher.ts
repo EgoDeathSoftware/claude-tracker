@@ -53,6 +53,10 @@ export class StoreSetWatcher {
   async start(): Promise<void> {
     await this.pollOnce();
     if (this.pollMs > 0) {
+      // Not re-entrant-guarded: a pass that outlives pollMs could overlap
+      // with the next tick. Not expected to matter at the default 30s
+      // interval and current per-store stat/readdir cost; add an in-flight
+      // guard here if store counts grow enough to change that.
       this.timer = setInterval(() => { void this.pollOnce(); }, this.pollMs);
       this.timer.unref?.();
     }
@@ -200,7 +204,10 @@ export class StoreSetWatcher {
    * promote/demote a store whose marker changed — which is what a container
    * relaunch looks like from the host. Each store's work is isolated so one
    * store's failure can't abort the whole pass or corrupt `known` for the
-   * others.
+   * others. A promote/demote is a remove followed by a re-add (the sink has
+   * no way to flip a live watcher's `watch` flag in place), so a store is
+   * transiently absent from the sink between the two — if the re-add fails,
+   * it stays absent until the next pass re-attaches it as "new".
    */
   async pollOnce(): Promise<void> {
     const stores = new Set(await this.listStores());
