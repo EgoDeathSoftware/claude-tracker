@@ -93,6 +93,9 @@ export function SessionList({
         )}
         {displayed.map(s => {
           const source = sourceById.get(s.sourceId);
+          const badgeLabel = source && source.location === 'container'
+            ? (source.origin?.container ?? source.name)
+            : source?.name;
           return (
             <button
               key={s.id}
@@ -115,20 +118,18 @@ export function SessionList({
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-1.5">
                   <StatusBadge status={s.status} />
-                  {sources.length > 1 && source && (
+                  {(sources.length > 1 || source?.location === 'container') && source && (
                     <>
                       <SourceKindDots kinds={[source.kind]} />
                       <span
                         title={source.location === 'container'
-                          ? `container: ${source.origin?.container ?? source.name}`
-                          : source.name}
+                          ? `container: ${badgeLabel}`
+                          : badgeLabel}
                         className="px-1.5 py-0.5 rounded text-[9px] font-medium
                           bg-gray-100 text-gray-600 uppercase tracking-wide
                           max-w-[7rem] truncate"
                       >
-                        {source.location === 'container'
-                          ? (source.origin?.container ?? source.name)
-                          : source.name}
+                        {badgeLabel}
                       </span>
                     </>
                   )}
