@@ -339,11 +339,11 @@ describe('SessionRegistry', () => {
     ]);
     await reg.start();
     try {
-      expect(reg.getSessions(undefined, ['opencode'])).toHaveLength(1);
-      expect(reg.getSessions(undefined, ['opencode'])[0]!.sourceId).toBe('opencode');
+      expect(reg.getSessions(undefined, { kinds: ['opencode'] })).toHaveLength(1);
+      expect(reg.getSessions(undefined, { kinds: ['opencode'] })[0]!.sourceId).toBe('opencode');
 
-      expect(reg.getProjects(['claude-code'])).toHaveLength(1);
-      expect(reg.getProjects(['claude-code'])[0]!.sources).toEqual(['claude']);
+      expect(reg.getProjects({ kinds: ['claude-code'] })).toHaveLength(1);
+      expect(reg.getProjects({ kinds: ['claude-code'] })[0]!.sources).toEqual(['claude']);
 
       // Omitting kinds (or passing undefined) returns everything, unchanged
       // from today's behavior.
@@ -482,5 +482,73 @@ describe('runtime source churn', () => {
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.id).toBe('sess-second');
     await registry.stop();
+  });
+});
+
+describe('location filtering', () => {
+  const seed = async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-loc-'));
+    const mk = async (name: string, sessionId: string) => {
+      const dir = join(root, name, 'projects', '-workspace');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${sessionId}.jsonl`), JSON.stringify({
+        type: 'user', uuid: `u-${sessionId}`, timestamp: '2026-08-21T10:00:00Z',
+        cwd: '/workspace', sessionId,
+        message: { role: 'user', content: 'hi' },
+      }), 'utf-8');
+      return join(root, name);
+    };
+    const registry = new SessionRegistry([]);
+    await registry.start();
+    await registry.addSource({
+      id: 'host-src', name: 'Host', path: await mk('hostish', 'sess-host'),
+      kind: 'claude-code', layout: 'single', location: 'host',
+      origin: { container: 'hostish', hostWorkspace: '/host/alpha' },
+    }, { watch: false });
+    await registry.addSource({
+      id: 'agents:beta', name: 'beta', path: await mk('beta', 'sess-beta'),
+      kind: 'claude-code', layout: 'single', location: 'container',
+      origin: { container: 'beta', hostWorkspace: '/host/beta' },
+    }, { watch: false });
+    return registry;
+  };
+
+  it('returns everything with no filter', async () => {
+    const r = await seed();
+    expect(r.getSessions()).toHaveLength(2);
+    expect(r.getProjects()).toHaveLength(2);
+    await r.stop();
+  });
+
+  it('filters sessions by location', async () => {
+    const r = await seed();
+    const containers = r.getSessions(undefined, { locations: ['container'] });
+    expect(containers).toHaveLength(1);
+    expect(containers[0]?.sourceId).toBe('agents:beta');
+    await r.stop();
+  });
+
+  it('filters projects by location', async () => {
+    const r = await seed();
+    const hosts = r.getProjects({ locations: ['host'] });
+    expect(hosts.map(p => p.id)).toEqual(['alpha']);
+    await r.stop();
+  });
+
+  it('combines kinds and locations', async () => {
+    const r = await seed();
+    expect(r.getSessions(undefined, {
+      kinds: ['claude-code'], locations: ['container'],
+    })).toHaveLength(1);
+    expect(r.getSessions(undefined, {
+      kinds: ['opencode'], locations: ['container'],
+    })).toHaveLength(0);
+    await r.stop();
+  });
+
+  it('an empty locations array matches nothing', async () => {
+    const r = await seed();
+    expect(r.getSessions(undefined, { locations: [] })).toHaveLength(0);
+    await r.stop();
   });
 });

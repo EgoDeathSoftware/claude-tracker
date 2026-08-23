@@ -70,13 +70,13 @@ describe('multi-agent integration (claude-code + opencode)', () => {
   });
 
   it('filters getSessions by kind, returning only opencode sessions', () => {
-    const opencodeOnly = registry.getSessions('shared-demo', ['opencode']);
+    const opencodeOnly = registry.getSessions('shared-demo', { kinds: ['opencode'] });
     expect(opencodeOnly).toHaveLength(1);
     expect(opencodeOnly[0]!.sourceId).toBe('opencode');
   });
 
   it('filters getProjects by kind, excluding the merged project when its only opencode session is filtered out', () => {
-    const claudeOnlyProjects = registry.getProjects(['claude-code']);
+    const claudeOnlyProjects = registry.getProjects({ kinds: ['claude-code'] });
     const shared = claudeOnlyProjects.find(p => p.id === 'shared-demo');
     expect(shared).toBeDefined();
     expect(shared!.sessionCount).toBe(1);

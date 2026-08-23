@@ -8,6 +8,11 @@ import type { Session, Project } from './types.js';
 import type { Source, SourceKind, SourceLocation } from './sources.js';
 import { displayNameFromCwd } from './project-key.js';
 
+export interface SessionFilter {
+  kinds?: SourceKind[] | undefined;
+  locations?: SourceLocation[] | undefined;
+}
+
 interface AgentWatcher extends EventEmitter {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -169,12 +174,28 @@ export class SessionRegistry extends EventEmitter {
     this.sessions.set(session.id, session);
   }
 
-  getProjects(kinds?: SourceKind[]): Project[] {
-    const allowedKinds = kinds ? new Set(kinds) : null;
+  /**
+   * Single predicate consulted by both getProjects and getSessions. Sessions
+   * whose source has since been removed (kind/location lookup misses) are
+   * excluded from any active filter rather than risking a stale match.
+   */
+  private matches(sourceId: string, filter?: SessionFilter): boolean {
+    if (filter?.kinds) {
+      const kind = this.kindBySourceId.get(sourceId);
+      if (!kind || !filter.kinds.includes(kind)) return false;
+    }
+    if (filter?.locations) {
+      const location = this.locationBySourceId.get(sourceId);
+      if (!location || !filter.locations.includes(location)) return false;
+    }
+    return true;
+  }
+
+  getProjects(filter?: SessionFilter): Project[] {
     const map = new Map<string, Project>();
     for (const session of this.sessions.values()) {
       if (session.isSubagent) continue;
-      if (allowedKinds && !allowedKinds.has(this.kindBySourceId.get(session.sourceId)!)) continue;
+      if (!this.matches(session.sourceId, filter)) continue;
       const existing = map.get(session.projectId);
       if (!existing) {
         map.set(session.projectId, {
@@ -207,11 +228,9 @@ export class SessionRegistry extends EventEmitter {
     );
   }
 
-  getSessions(projectId?: string, kinds?: SourceKind[]): Session[] {
-    const allowedKinds = kinds ? new Set(kinds) : null;
+  getSessions(projectId?: string, filter?: SessionFilter): Session[] {
     const all = [...this.sessions.values()].filter(
-      s => !s.isSubagent
-        && (!allowedKinds || allowedKinds.has(this.kindBySourceId.get(s.sourceId)!)),
+      s => !s.isSubagent && this.matches(s.sourceId, filter),
     );
     const filtered = projectId
       ? all.filter(s => s.projectId === projectId)

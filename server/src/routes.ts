@@ -72,14 +72,14 @@ export function buildApp(
     );
   }
 
-  app.get('/api/projects', c => c.json(registry.getProjects(parseKinds(c))));
+  app.get('/api/projects', c => c.json(registry.getProjects({ kinds: parseKinds(c) })));
 
   app.get('/api/sources', c => c.json(registry.getSources()));
 
   app.get('/api/sessions', c => {
     const projectId = c.req.query('projectId');
     const tag = c.req.query('tag');
-    let sessions = registry.getSessions(projectId, parseKinds(c));
+    let sessions = registry.getSessions(projectId, { kinds: parseKinds(c) });
     if (tag) {
       const tagSessionIds = new Set(db.getSessionsByTag(tag));
       sessions = sessions.filter(s => tagSessionIds.has(s.id));
