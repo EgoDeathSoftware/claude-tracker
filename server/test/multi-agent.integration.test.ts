@@ -30,8 +30,14 @@ describe('multi-agent integration (claude-code + opencode)', () => {
     ]);
 
     const sources: Source[] = [
-      { id: 'claude', name: 'Claude Code', path: CLAUDE_FIXTURE, kind: 'claude-code' },
-      { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+      {
+        id: 'claude', name: 'Claude Code', path: CLAUDE_FIXTURE,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'opencode', name: 'OpenCode', path: opencodeDir,
+        kind: 'opencode', layout: 'single', location: 'host',
+      },
     ];
     registry = new SessionRegistry(sources);
     await registry.start();

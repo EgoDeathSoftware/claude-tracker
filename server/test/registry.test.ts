@@ -105,8 +105,14 @@ describe('SessionRegistry', () => {
     );
 
     const sources: Source[] = [
-      { id: 'wsl', name: 'WSL', path: wslDir, kind: 'claude-code' },
-      { id: 'windows', name: 'Windows', path: winDir, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: wslDir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'windows', name: 'Windows', path: winDir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ];
     const reg = new SessionRegistry(sources);
     await reg.start();
@@ -145,7 +151,10 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: dir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -171,7 +180,10 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: dir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -202,7 +214,10 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: dir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -227,8 +242,14 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'gone', name: 'Gone', path: '/definitely/not/here', kind: 'claude-code' },
-      { id: 'ok', name: 'OK', path: ok, kind: 'claude-code' },
+      {
+        id: 'gone', name: 'Gone', path: '/definitely/not/here',
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'ok', name: 'OK', path: ok,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -260,8 +281,14 @@ describe('SessionRegistry', () => {
     });
 
     const reg = new SessionRegistry([
-      { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
-      { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+      {
+        id: 'claude', name: 'Claude Code', path: claudeDir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'opencode', name: 'OpenCode', path: opencodeDir,
+        kind: 'opencode', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -300,8 +327,14 @@ describe('SessionRegistry', () => {
     });
 
     const reg = new SessionRegistry([
-      { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
-      { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+      {
+        id: 'claude', name: 'Claude Code', path: claudeDir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'opencode', name: 'OpenCode', path: opencodeDir,
+        kind: 'opencode', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {

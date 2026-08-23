@@ -100,8 +100,14 @@ describe('routes', () => {
       });
 
       const { app } = await buildTestApp([
-        { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
-        { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+        {
+          id: 'claude', name: 'Claude Code', path: claudeDir,
+          kind: 'claude-code', layout: 'single', location: 'host',
+        },
+        {
+          id: 'opencode', name: 'OpenCode', path: opencodeDir,
+          kind: 'opencode', layout: 'single', location: 'host',
+        },
       ]);
 
       const allSessions = await app.request('/api/sessions').then(r => r.json());
@@ -127,7 +133,10 @@ describe('routes', () => {
       });
 
       const { app } = await buildTestApp([
-        { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+        {
+          id: 'opencode', name: 'OpenCode', path: opencodeDir,
+          kind: 'opencode', layout: 'single', location: 'host',
+        },
       ]);
 
       const res = await app.request('/api/sessions/oc-sess/raw');
@@ -147,7 +156,10 @@ describe('routes', () => {
       );
 
       const { app } = await buildTestApp([
-        { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
+        {
+          id: 'claude', name: 'Claude Code', path: claudeDir,
+          kind: 'claude-code', layout: 'single', location: 'host',
+        },
       ]);
 
       const res = await app.request('/api/sessions/cc-sess/raw');
@@ -164,7 +176,10 @@ describe('routes', () => {
       cleanup.push(claudeDir);
 
       const { app } = await buildTestApp([
-        { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
+        {
+          id: 'claude', name: 'Claude Code', path: claudeDir,
+          kind: 'claude-code', layout: 'single', location: 'host',
+        },
       ]);
 
       const configRes = await app.request('/api/config/opencode');
@@ -190,6 +205,7 @@ describe('routes', () => {
         {
           id: 'opencode', name: 'OpenCode', path: opencodeDataDir,
           kind: 'opencode', configPath: opencodeConfigDir,
+          layout: 'single', location: 'host',
         },
       ]);
 
@@ -215,6 +231,7 @@ describe('routes', () => {
         {
           id: 'opencode', name: 'OpenCode', path: opencodeDataDir,
           kind: 'opencode', configPath: opencodeConfigDir,
+          layout: 'single', location: 'host',
         },
       ]);
 
