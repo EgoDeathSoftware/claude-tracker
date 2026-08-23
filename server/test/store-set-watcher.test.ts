@@ -89,18 +89,20 @@ describe('StoreSetWatcher expansion', () => {
     expect(sink.added.map(a => a.source.id)).toEqual(['agents:never-ran']);
   });
 
-  it('ignores files at the root and tolerates a missing root', async () => {
+  it('ignores files at the root', async () => {
     await writeFile(join(root, 'stray.txt'), 'x', 'utf-8');
     const sink = recordingSink();
     const w = new StoreSetWatcher({ ...parent, path: root }, sink);
     await w.start();
     await w.stop();
     expect(sink.added).toHaveLength(0);
+  });
 
-    const absent = recordingSink();
-    const w2 = new StoreSetWatcher({ ...parent, path: join(root, 'nope') }, absent);
-    await expect(w2.start()).resolves.toBeUndefined();
-    await w2.stop();
-    expect(absent.added).toHaveLength(0);
+  it('tolerates a missing root', async () => {
+    const sink = recordingSink();
+    const w = new StoreSetWatcher({ ...parent, path: join(root, 'nope') }, sink);
+    await expect(w.start()).resolves.toBeUndefined();
+    await w.stop();
+    expect(sink.added).toHaveLength(0);
   });
 });

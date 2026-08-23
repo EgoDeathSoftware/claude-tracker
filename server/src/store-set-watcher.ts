@@ -5,7 +5,7 @@ import type { Source } from './sources.js';
 
 /** The subset of SessionRegistry a StoreSetWatcher drives. */
 export interface SourceSink {
-  addSource(source: Source, opts?: { watch?: boolean }): Promise<void>;
+  addSource(source: Source, opts?: { watch?: boolean | undefined }): Promise<void>;
   removeSource(id: string): Promise<void>;
 }
 
@@ -35,7 +35,19 @@ export class StoreSetWatcher {
 
   private async listStores(): Promise<string[]> {
     const entries = await readdir(this.parent.path, { withFileTypes: true })
-      .catch(() => []);
+      .catch((err: NodeJS.ErrnoException) => {
+        // A missing root is an expected, tolerated state (no containers have
+        // ever run yet). Anything else — e.g. a permissions error on the
+        // bind-mounted volume — is worth surfacing rather than looking
+        // identical to "zero containers found".
+        if (err.code !== 'ENOENT') {
+          console.warn(
+            `[store-set-watcher:${this.parent.id}] failed to read ${this.parent.path}:`,
+            err,
+          );
+        }
+        return [];
+      });
     return entries.filter(e => e.isDirectory()).map(e => e.name);
   }
 
