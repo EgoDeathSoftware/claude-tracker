@@ -353,3 +353,88 @@ describe('SessionRegistry', () => {
     }
   });
 });
+
+describe('runtime source churn', () => {
+  const makeStore = async (root: string, name: string, sessionId: string) => {
+    const projectDir = join(root, name, 'projects', '-workspace');
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(join(projectDir, `${sessionId}.jsonl`), JSON.stringify({
+      type: 'user', uuid: `u-${sessionId}`, timestamp: '2026-08-21T10:00:00Z',
+      cwd: '/workspace', sessionId,
+      message: { role: 'user', content: 'hi' },
+    }), 'utf-8');
+    return join(root, name);
+  };
+
+  it('adds a source at runtime and ingests its sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-add-'));
+    const storePath = await makeStore(root, 'demo', 'sess-demo');
+    const registry = new SessionRegistry([]);
+    await registry.start();
+    expect(registry.getSessions()).toHaveLength(0);
+
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: storePath,
+      kind: 'claude-code', layout: 'single', location: 'container',
+      origin: { container: 'demo', hostWorkspace: '/host/demo' },
+    }, { watch: false });
+
+    const sessions = registry.getSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.projectId).toBe('demo');
+    expect(registry.getSources().map(s => s.id)).toContain('agents:demo');
+    await registry.stop();
+  });
+
+  it('emits sources-changed on add and remove', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-evt-'));
+    const storePath = await makeStore(root, 'demo', 'sess-evt');
+    const registry = new SessionRegistry([]);
+    await registry.start();
+
+    let changes = 0;
+    registry.on('sources-changed', () => { changes++; });
+
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: storePath,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    expect(changes).toBe(1);
+
+    await registry.removeSource('agents:demo');
+    expect(changes).toBe(2);
+    await registry.stop();
+  });
+
+  it('drops the removed source sessions and leaves others intact', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-rm-'));
+    const a = await makeStore(root, 'alpha', 'sess-alpha');
+    const b = await makeStore(root, 'beta', 'sess-beta');
+    const registry = new SessionRegistry([]);
+    await registry.start();
+
+    await registry.addSource({
+      id: 'agents:alpha', name: 'alpha', path: a,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    await registry.addSource({
+      id: 'agents:beta', name: 'beta', path: b,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    expect(registry.getSessions()).toHaveLength(2);
+
+    await registry.removeSource('agents:alpha');
+    const remaining = registry.getSessions();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.sourceId).toBe('agents:beta');
+    expect(registry.getSources().map(s => s.id)).toEqual(['agents:beta']);
+    await registry.stop();
+  });
+
+  it('removing an unknown source is a no-op', async () => {
+    const registry = new SessionRegistry([]);
+    await registry.start();
+    await expect(registry.removeSource('nope')).resolves.toBeUndefined();
+    await registry.stop();
+  });
+});
