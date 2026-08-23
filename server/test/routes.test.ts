@@ -318,10 +318,20 @@ describe('location filtering over HTTP', () => {
 
   it('exposes location, origin, and parentId on /api/sources', async () => {
     const registry = await seedRegistry();
+    const gammaDir = await mkdtemp(join(tmpdir(), 'routes-loc-gamma-'));
+    cleanup.push(gammaDir);
+    await registry.addSource({
+      id: 'agents:gamma', name: 'gamma', path: gammaDir,
+      kind: 'claude-code', layout: 'single', location: 'container',
+      origin: { container: 'gamma', hostWorkspace: '/host/gamma' },
+      parentId: 'agents',
+    }, { watch: false });
     const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
     const sources = await (await app.request('/api/sources')).json();
     const beta = sources.find((s: { id: string }) => s.id === 'agents:beta');
     expect(beta.location).toBe('container');
     expect(beta.origin.hostWorkspace).toBe('/host/beta');
+    const gamma = sources.find((s: { id: string }) => s.id === 'agents:gamma');
+    expect(gamma.parentId).toBe('agents');
   });
 });
