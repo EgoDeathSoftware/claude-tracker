@@ -95,8 +95,14 @@ export class SessionRegistry extends EventEmitter {
     await Promise.allSettled([...this.watchers.values()].map(w => w.stop()));
   }
 
-  /** Register a source discovered after startup and ingest its sessions. */
-  async addSource(source: Source, opts?: { watch?: boolean }): Promise<void> {
+  /**
+   * Register a source discovered after startup and ingest its sessions.
+   * Not safe to call concurrently for the same source id: a second call's
+   * `removeSource` can race the first call's in-flight `watcher.start()`
+   * and leave an orphaned, never-stopped watcher running under the old
+   * reference. Callers must serialize add/remove per source id.
+   */
+  async addSource(source: Source, opts?: { watch?: boolean | undefined }): Promise<void> {
     if (this.watchers.has(source.id)) await this.removeSource(source.id);
 
     const watcher = createWatcher(
@@ -123,14 +129,21 @@ export class SessionRegistry extends EventEmitter {
   async removeSource(id: string): Promise<void> {
     const watcher = this.watchers.get(id);
     if (!watcher) return;
-    await watcher.stop().catch(() => undefined);
+    try {
+      await watcher.stop();
+    } catch (err) {
+      console.warn(`[registry] source "${id}" failed to stop:`, err);
+    }
     watcher.removeAllListeners();
     this.watchers.delete(id);
     this.kindBySourceId.delete(id);
     this.locationBySourceId.delete(id);
     this.sources = this.sources.filter(s => s.id !== id);
     for (const [sessionId, session] of this.sessions) {
-      if (session.sourceId === id) this.sessions.delete(sessionId);
+      if (session.sourceId === id) {
+        this.sessions.delete(sessionId);
+        this.db?.removeSession(sessionId);
+      }
     }
     this.emit('sources-changed');
   }

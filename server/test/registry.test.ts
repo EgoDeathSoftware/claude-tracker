@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import { SessionRegistry } from '../src/registry.js';
+import { TrackerDB } from '../src/db.js';
 import type { Source } from '../src/sources.js';
 
 // Mirrors the real opencode DB (verified against a live install) - parts
@@ -435,6 +436,51 @@ describe('runtime source churn', () => {
     const registry = new SessionRegistry([]);
     await registry.start();
     await expect(registry.removeSource('nope')).resolves.toBeUndefined();
+    await registry.stop();
+  });
+
+  it('removes SQLite state when a source is removed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-db-rm-'));
+    const storePath = await makeStore(root, 'demo', 'sess-searchme');
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: storePath,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    expect(registry.getSessions()).toHaveLength(1);
+    expect(db.search('hi')).toHaveLength(1);
+
+    await registry.removeSource('agents:demo');
+    expect(db.search('hi')).toHaveLength(0);
+    await registry.stop();
+  });
+
+  it('replaces a source cleanly when addSource is called twice with the same id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-add-twice-'));
+    const first = await makeStore(root, 'first', 'sess-first');
+    const second = await makeStore(root, 'second', 'sess-second');
+    const registry = new SessionRegistry([]);
+    await registry.start();
+
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: first,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: second,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+
+    const sources = registry.getSources().filter(s => s.id === 'agents:demo');
+    expect(sources).toHaveLength(1);
+    expect(sources[0]?.path).toBe(second);
+
+    const sessions = registry.getSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.id).toBe('sess-second');
     await registry.stop();
   });
 });
