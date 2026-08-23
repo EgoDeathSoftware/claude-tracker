@@ -1,3 +1,6 @@
+import { readFile } from 'node:fs/promises';
+import { join } from 'node:path';
+
 /**
  * Provenance for one agent container's Claude store, read from the
  * `.tracker-origin.json` marker that agent-shell writes at launch.
@@ -37,4 +40,54 @@ export function rewriteCwd(cwd: string, origin: StoreOrigin): string {
   if (cwd === mount) return hostWorkspace;
   if (cwd.startsWith(`${mount}/`)) return hostWorkspace + cwd.slice(mount.length);
   return cwd;
+}
+
+function stringOrUndefined(value: unknown): string | undefined {
+  return typeof value === 'string' && value.length > 0 ? value : undefined;
+}
+
+/**
+ * Read a store's provenance marker. Never rejects: any unusable marker —
+ * missing, malformed, or lacking hostWorkspace — resolves to a synthesised
+ * origin keyed on the store directory name.
+ */
+export async function readStoreOrigin(
+  storePath: string,
+  storeName: string,
+): Promise<StoreOrigin> {
+  const fallback = synthesizeOrigin(storeName);
+  const raw = await readFile(join(storePath, '.tracker-origin.json'), 'utf-8')
+    .catch(() => null);
+  if (raw === null) return fallback;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+  if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+    return fallback;
+  }
+
+  const marker = parsed as Record<string, unknown>;
+  const hostWorkspace = stringOrUndefined(marker['hostWorkspace']);
+  if (hostWorkspace === undefined) {
+    return {
+      ...fallback,
+      container: stringOrUndefined(marker['container']) ?? storeName,
+      image: stringOrUndefined(marker['image']),
+      host: stringOrUndefined(marker['host']),
+      updatedAt: stringOrUndefined(marker['updatedAt']),
+    };
+  }
+
+  return {
+    container: stringOrUndefined(marker['container']) ?? storeName,
+    image: stringOrUndefined(marker['image']),
+    hostWorkspace,
+    workspaceMount: stringOrUndefined(marker['workspaceMount']) ?? DEFAULT_MOUNT,
+    host: stringOrUndefined(marker['host']),
+    updatedAt: stringOrUndefined(marker['updatedAt']),
+  };
 }
