@@ -458,7 +458,7 @@ describe('runtime source churn', () => {
     await registry.stop();
   });
 
-  it('replaces a source cleanly when addSource is called twice with the same id', async () => {
+  it('replaces a source cleanly when addSource is called twice sequentially with the same id', async () => {
     const root = await mkdtemp(join(tmpdir(), 'registry-add-twice-'));
     const first = await makeStore(root, 'first', 'sess-first');
     const second = await makeStore(root, 'second', 'sess-second');
