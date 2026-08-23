@@ -25,7 +25,7 @@ export class SourceWatcher extends EventEmitter {
   async start(): Promise<void> {
     await this.scanExisting();
     this.linkSubagents();
-    this.watchDir();
+    await this.watchDir();
   }
 
   private dirNameFromPath(filePath: string): string {
@@ -140,22 +140,40 @@ export class SourceWatcher extends EventEmitter {
     }
   }
 
-  private watchDir(): void {
-    this.watcher = watch(`${this.projectsDir}/**/*.jsonl`, {
+  private async watchDir(): Promise<void> {
+    // chokidar v4 dropped glob-pattern support, so we watch the directory
+    // itself (recursively, by default) and filter for .jsonl in the handlers.
+    const watcher = watch(this.projectsDir, {
       ignoreInitial: true,
       persistent: true,
       usePolling: true,
       interval: 1000,
       awaitWriteFinish: { stabilityThreshold: 300, pollInterval: 100 },
     });
+    this.watcher = watcher;
 
-    this.watcher.on('add', (filePath: string) => {
+    watcher.on('add', (filePath: string) => {
+      if (!filePath.endsWith('.jsonl')) return;
       void this.handleFileEvent(filePath, 'session-created');
     });
 
-    this.watcher.on('change', (filePath: string) => {
+    watcher.on('change', (filePath: string) => {
+      if (!filePath.endsWith('.jsonl')) return;
       void this.handleFileEvent(filePath, 'session-updated');
     });
+
+    // chokidar throws (crashing the process) if 'error' fires with no
+    // listener attached, e.g. EMFILE from too many polling watchers.
+    watcher.on('error', err => {
+      console.error(`[source-watcher:${this.sourceId}] chokidar error:`, err);
+    });
+
+    // Wait for chokidar to finish its initial crawl and attach OS-level
+    // watches before returning, otherwise a write immediately after start()
+    // can race ahead of setup and be missed entirely. This is not fully
+    // sufficient under polling-backend churn — see the retry note on the
+    // "watches by default" test in source-watcher.test.ts.
+    await new Promise<void>(resolve => watcher.once('ready', resolve));
   }
 
   async stop(): Promise<void> {

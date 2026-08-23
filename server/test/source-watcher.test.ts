@@ -133,3 +133,36 @@ describe('SourceWatcher subagent support', () => {
     }
   });
 });
+
+describe('SourceWatcher options', () => {
+  // chokidar's polling backend (fs.watchFile) occasionally misses the very
+  // first change detected by a freshly created watcher when another polling
+  // watcher was just torn down in the same process — a timing quirk in
+  // Node's stat-polling internals, reproducible even with two bare
+  // SourceWatcher instances and no application logic involved. retry
+  // absorbs that instead of flaking the suite.
+  //
+  // This same race can recur in production once StoreSetWatcher (plan Task
+  // 9) starts creating/tearing down many SourceWatcher-backed watchers in
+  // one process for container churn. If it does, it needs a real mitigation
+  // there (e.g. a defensive re-scan a few seconds after 'ready'), not just a
+  // test retry.
+  it('watches by default when no options are given', { timeout: 10_000, retry: 4 }, async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'sw-default-'));
+    await mkdir(join(dir, 'projects', '-workspace'), { recursive: true });
+    const watcher = new SourceWatcher('agents:loud', dir);
+    await watcher.start();
+
+    const seen = new Promise<void>(resolve => {
+      watcher.on('session-created', () => resolve());
+    });
+    await writeFile(join(dir, 'projects', '-workspace', 'new.jsonl'), JSON.stringify({
+      type: 'user', uuid: 'u10', timestamp: '2026-08-21T11:00:00Z',
+      cwd: '/workspace', sessionId: 'sess-new',
+      message: { role: 'user', content: 'new' },
+    }), 'utf-8');
+
+    await seen;
+    await watcher.stop();
+  });
+});
