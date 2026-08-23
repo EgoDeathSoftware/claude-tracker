@@ -2,7 +2,9 @@ import { describe, it, expect, beforeEach } from 'vitest';
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { rewriteCwd, synthesizeOrigin, readStoreOrigin } from '../src/store-origin.ts';
+import {
+  rewriteCwd, synthesizeOrigin, readStoreOrigin, applyOrigin,
+} from '../src/store-origin.ts';
 import type { StoreOrigin } from '../src/store-origin.ts';
 
 const origin: StoreOrigin = {
@@ -124,5 +126,71 @@ describe('readStoreOrigin', () => {
     const origin = await readStoreOrigin(dir, 'unnamed');
     expect(origin.container).toBe('unnamed');
     expect(origin.hostWorkspace).toBe('/home/dave/proj');
+  });
+});
+
+describe('applyOrigin', () => {
+  const baseSession = {
+    id: 's1',
+    sourceId: 'agents:vercel.ai',
+    projectId: 'workspace',
+    filePath: '/claude/agents/vercel.ai/projects/-workspace/s1.jsonl',
+    slug: 's1',
+    title: 'A session',
+    status: 'done' as const,
+    turnCount: 3,
+    costUsd: 0.5,
+    model: 'claude-opus-5',
+    startedAt: '2026-08-21T10:00:00Z',
+    lastActivityAt: '2026-08-21T10:05:00Z',
+    durationMs: 300_000,
+    cwd: '/workspace',
+    messages: [],
+    logEntries: [],
+    toolCalls: [],
+    fileChanges: [],
+    costBreakdown: { byTool: {}, conversationCost: 0, toolCost: 0, totalCost: 0 },
+    hookEvents: [],
+    permissionEvents: [],
+    subagents: [],
+    isSubagent: false,
+    recaps: [],
+  };
+
+  it('rewrites cwd and recomputes projectId', () => {
+    const out = applyOrigin(baseSession, {
+      container: 'vercel.ai',
+      hostWorkspace: '/home/dave/Projects/agent-shell',
+    });
+    expect(out.cwd).toBe('/home/dave/Projects/agent-shell');
+    expect(out.projectId).toBe('agent-shell');
+  });
+
+  it('derives the key from a Windows hostWorkspace', () => {
+    const out = applyOrigin(baseSession, {
+      container: 'c',
+      hostWorkspace: 'C:\\Users\\dave\\claude-project-tracker',
+    });
+    expect(out.projectId).toBe('claude-project-tracker');
+  });
+
+  it('keys on the store name under the fallback origin', () => {
+    const out = applyOrigin(baseSession, synthesizeOrigin('legacy-shared'));
+    expect(out.projectId).toBe('legacy-shared');
+  });
+
+  it('changes nothing else about the session', () => {
+    const out = applyOrigin(baseSession, {
+      container: 'c',
+      hostWorkspace: '/home/dave/proj',
+    });
+    expect({ ...out, cwd: baseSession.cwd, projectId: baseSession.projectId })
+      .toEqual(baseSession);
+  });
+
+  it('does not mutate the input session', () => {
+    applyOrigin(baseSession, { container: 'c', hostWorkspace: '/home/dave/proj' });
+    expect(baseSession.cwd).toBe('/workspace');
+    expect(baseSession.projectId).toBe('workspace');
   });
 });

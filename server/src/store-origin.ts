@@ -1,5 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { Session } from './types.js';
+import { deriveProjectKey } from './project-key.js';
 
 /**
  * Provenance for one agent container's Claude store, read from the
@@ -89,5 +91,19 @@ export async function readStoreOrigin(
     workspaceMount: stringOrUndefined(marker['workspaceMount']) ?? DEFAULT_MOUNT,
     host: stringOrUndefined(marker['host']),
     updatedAt: stringOrUndefined(marker['updatedAt']),
+  };
+}
+
+/**
+ * Return a copy of `session` with its container-local cwd translated to the
+ * host path and its project key recomputed, so container sessions merge with
+ * host sessions for the same folder.
+ */
+export function applyOrigin(session: Session, origin: StoreOrigin): Session {
+  const cwd = rewriteCwd(session.cwd, origin);
+  return {
+    ...session,
+    cwd,
+    projectId: deriveProjectKey(cwd, session.sourceId, origin.container),
   };
 }
