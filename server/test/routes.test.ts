@@ -316,6 +316,28 @@ describe('location filtering over HTTP', () => {
     expect(await res.json()).toHaveLength(0);
   });
 
+  it('an explicitly empty ?locations= filters to nothing, unlike an absent param', async () => {
+    const registry = await seedRegistry();
+    const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
+
+    const noParam = await (await app.request('/api/sessions')).json();
+    expect(noParam).toHaveLength(2);
+
+    const emptyParam = await (await app.request('/api/sessions?locations=')).json();
+    expect(emptyParam).toHaveLength(0);
+  });
+
+  it('an explicitly empty ?kinds= filters to nothing, unlike an absent param', async () => {
+    const registry = await seedRegistry();
+    const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
+
+    const noParam = await (await app.request('/api/projects')).json();
+    expect(noParam.length).toBeGreaterThan(0);
+
+    const emptyParam = await (await app.request('/api/projects?kinds=')).json();
+    expect(emptyParam).toHaveLength(0);
+  });
+
   it('exposes location, origin, and parentId on /api/sources', async () => {
     const registry = await seedRegistry();
     const gammaDir = await mkdtemp(join(tmpdir(), 'routes-loc-gamma-'));

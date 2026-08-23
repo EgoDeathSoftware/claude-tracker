@@ -4,13 +4,16 @@ import type { SourceKind, SourceLocation } from '@/hooks/useSources.ts';
 
 export function useProjects(kinds?: SourceKind[], locations?: SourceLocation[]) {
   const [projects, setProjects] = useState<Project[]>([]);
-  const kindsKey = kinds?.join(',') ?? '';
-  const locationsKey = locations?.join(',') ?? '';
+  // undefined means "no filter"; '' means "filtered down to nothing" (every
+  // checkbox deselected) — these must stay distinguishable all the way to
+  // the server, so this is NOT `?? ''`.
+  const kindsKey = kinds?.join(',');
+  const locationsKey = locations?.join(',');
 
   const refresh = useCallback(() => {
     const params = new URLSearchParams();
-    if (kindsKey) params.set('kinds', kindsKey);
-    if (locationsKey) params.set('locations', locationsKey);
+    if (kindsKey !== undefined) params.set('kinds', kindsKey);
+    if (locationsKey !== undefined) params.set('locations', locationsKey);
     const qs = params.toString();
     void fetch(qs ? `/api/projects?${qs}` : '/api/projects')
       .then(r => r.json()).then(setProjects);

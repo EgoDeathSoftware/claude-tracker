@@ -64,9 +64,13 @@ export function buildApp(
 
   // --- Projects & Sessions ---
 
+  // A present-but-empty param (?kinds=) means "the user deselected every
+  // checkbox" and must filter to zero results, distinct from an absent
+  // param meaning "no filter requested" — so this checks presence, not
+  // truthiness.
   function parseKinds(c: Context): SourceKind[] | undefined {
     const kindsParam = c.req.query('kinds');
-    if (!kindsParam) return undefined;
+    if (kindsParam === undefined) return undefined;
     return kindsParam.split(',').filter(
       (k): k is SourceKind => k === 'claude-code' || k === 'opencode',
     );
@@ -74,7 +78,7 @@ export function buildApp(
 
   function parseLocations(c: Context): SourceLocation[] | undefined {
     const param = c.req.query('locations');
-    if (!param) return undefined;
+    if (param === undefined) return undefined;
     return param.split(',').filter(
       (l): l is SourceLocation => l === 'host' || l === 'container',
     );
