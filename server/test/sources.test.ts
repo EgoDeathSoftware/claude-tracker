@@ -201,8 +201,21 @@ describe('loadSources', () => {
 });
 
 describe('layout and location', () => {
-  it('defaults layout to single and location to host', async () => {
+  const cleanup: string[] = [];
+  afterEach(async () => {
+    for (const d of cleanup.splice(0)) {
+      await rm(d, { recursive: true, force: true });
+    }
+  });
+
+  const layoutDir = async (): Promise<string> => {
     const dir = await mkdtemp(join(tmpdir(), 'sources-layout-'));
+    cleanup.push(dir);
+    return dir;
+  };
+
+  it('defaults layout to single and location to host', async () => {
+    const dir = await layoutDir();
     const cfg = join(dir, 'sources.json');
     await writeFile(cfg, JSON.stringify({
       sources: [{ id: 'wsl', name: 'WSL', path: dir }],
@@ -213,7 +226,7 @@ describe('layout and location', () => {
   });
 
   it('accepts an explicit store-set layout', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'sources-layout-'));
+    const dir = await layoutDir();
     const cfg = join(dir, 'sources.json');
     await writeFile(cfg, JSON.stringify({
       sources: [{ id: 'agents', name: 'Agents', path: dir, layout: 'store-set' }],
@@ -224,7 +237,7 @@ describe('layout and location', () => {
   });
 
   it('rejects an unknown layout', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'sources-layout-'));
+    const dir = await layoutDir();
     const cfg = join(dir, 'sources.json');
     await writeFile(cfg, JSON.stringify({
       sources: [{ id: 'agents', name: 'Agents', path: dir, layout: 'nested' }],
@@ -233,7 +246,7 @@ describe('layout and location', () => {
   });
 
   it('gives the env-var fallback source the defaults', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'sources-layout-'));
+    const dir = await layoutDir();
     const sources = await loadSources(join(dir, 'absent.json'), dir);
     expect(sources[0]?.layout).toBe('single');
     expect(sources[0]?.location).toBe('host');
