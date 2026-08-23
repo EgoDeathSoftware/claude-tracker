@@ -552,3 +552,43 @@ describe('location filtering', () => {
     await r.stop();
   });
 });
+
+describe('store-set sources', () => {
+  it('expands a store-set source into child sources at start', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-storeset-'));
+    for (const name of ['alpha', 'beta']) {
+      const dir = join(root, name, 'projects', '-workspace');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 's.jsonl'), JSON.stringify({
+        type: 'user', uuid: `u-${name}`, timestamp: '2026-08-21T10:00:00Z',
+        cwd: '/workspace', sessionId: `sess-${name}`,
+        message: { role: 'user', content: 'hi' },
+      }), 'utf-8');
+      await writeFile(join(root, name, '.tracker-origin.json'), JSON.stringify({
+        container: name, hostWorkspace: `/home/dave/${name}`,
+      }), 'utf-8');
+    }
+
+    const registry = new SessionRegistry([{
+      id: 'agents', name: 'Agent Containers', path: root,
+      kind: 'claude-code', layout: 'store-set', location: 'host',
+    }]);
+    await registry.start();
+
+    const ids = registry.getSources().map(s => s.id).sort();
+    expect(ids).toEqual(['agents:alpha', 'agents:beta']);
+    expect(registry.getProjects().map(p => p.id).sort()).toEqual(['alpha', 'beta']);
+    await registry.stop();
+  });
+
+  it('does not create a SourceWatcher for the store-set parent itself', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-parent-'));
+    const registry = new SessionRegistry([{
+      id: 'agents', name: 'Agent Containers', path: root,
+      kind: 'claude-code', layout: 'store-set', location: 'host',
+    }]);
+    await registry.start();
+    expect(registry.getSources().map(s => s.id)).not.toContain('agents');
+    await registry.stop();
+  });
+});

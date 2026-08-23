@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { SourceWatcher } from './source-watcher.js';
 import type { SourceWatcherOptions } from './source-watcher.js';
 import { OpenCodeWatcher } from './opencode-watcher.js';
+import { StoreSetWatcher } from './store-set-watcher.js';
 import { applyOrigin } from './store-origin.js';
 import type { TrackerDB } from './db.js';
 import type { Session, Project } from './types.js';
@@ -34,6 +35,7 @@ function createWatcher(
 
 export class SessionRegistry extends EventEmitter {
   private watchers = new Map<string, AgentWatcher>();
+  private storeSets: StoreSetWatcher[] = [];
   private sessions = new Map<string, Session>();
   private db: TrackerDB | null;
   private kindBySourceId: Map<string, SourceKind>;
@@ -69,6 +71,9 @@ export class SessionRegistry extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    const storeSetSources = this.sources.filter(s => s.layout === 'store-set');
+    this.sources = this.sources.filter(s => s.layout !== 'store-set');
+
     for (const source of this.sources) {
       this.watchers.set(
         source.id,
@@ -94,9 +99,18 @@ export class SessionRegistry extends EventEmitter {
     }
 
     for (const [, w] of entries) this.subscribe(w);
+
+    this.storeSets = storeSetSources.map(
+      source => new StoreSetWatcher(source, {
+        addSource: (child, opts) => this.addSource(child, opts),
+        removeSource: id => this.removeSource(id),
+      }),
+    );
+    await Promise.allSettled(this.storeSets.map(w => w.start()));
   }
 
   async stop(): Promise<void> {
+    await Promise.allSettled(this.storeSets.map(w => w.stop()));
     await Promise.allSettled([...this.watchers.values()].map(w => w.stop()));
   }
 
