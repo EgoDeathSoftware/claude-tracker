@@ -21,6 +21,8 @@ services:
     environment:
       - DATA_DIR=/app/data
       - PORT=3001
+      - STORE_ACTIVE_DAYS=${STORE_ACTIVE_DAYS:-}
+      - STORE_POLL_MS=${STORE_POLL_MS:-}
     restart: unless-stopped
 
 volumes:

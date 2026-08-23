@@ -1,5 +1,5 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
@@ -594,4 +594,67 @@ describe('store-set sources', () => {
     expect(registry.getSources().map(s => s.id)).not.toContain('agents');
     await registry.stop();
   });
+
+  // Proves the registry's third constructor argument actually reaches
+  // StoreSetWatcher, since an omitted optional argument compiles fine either
+  // way -- TypeScript alone can't catch a dropped pass-through here.
+  it('threads storeSetOptions.activeDays down to every StoreSetWatcher', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-activedays-'));
+    const dir = join(root, 'stale', 'projects', '-workspace');
+    await mkdir(dir, { recursive: true });
+    const jsonlPath = join(dir, 's.jsonl');
+    await writeFile(jsonlPath, JSON.stringify({
+      type: 'user', uuid: 'u-stale', timestamp: '2026-08-21T10:00:00Z',
+      cwd: '/workspace', sessionId: 'sess-stale',
+      message: { role: 'user', content: 'hi' },
+    }), 'utf-8');
+    const markerPath = join(root, 'stale', '.tracker-origin.json');
+    await writeFile(markerPath, JSON.stringify({
+      container: 'stale', hostWorkspace: '/home/dave/stale',
+    }), 'utf-8');
+    const aged = new Date(Date.now() - 30 * 86_400_000);
+    await utimes(jsonlPath, aged, aged);
+    await utimes(markerPath, aged, aged);
+
+    const source = {
+      id: 'agents', name: 'Agent Containers', path: root,
+      kind: 'claude-code' as const, layout: 'store-set' as const, location: 'host' as const,
+    };
+
+    // Under the default 14-day window the store is stale and unwatched, so a
+    // file written after start() is never picked up.
+    const unwatched = new SessionRegistry([source]);
+    await unwatched.start();
+    const laterUnwatched = new Promise<void>(resolve => {
+      unwatched.on('session-created', () => resolve());
+    });
+    await writeFile(join(dir, 'later.jsonl'), JSON.stringify({
+      type: 'user', uuid: 'u-later', timestamp: '2026-08-21T11:00:00Z',
+      cwd: '/workspace', sessionId: 'sess-later-unwatched',
+      message: { role: 'user', content: 'later' },
+    }), 'utf-8');
+    const sawEvent = await Promise.race([
+      laterUnwatched.then(() => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 1500)),
+    ]);
+    expect(sawEvent).toBe(false);
+    await unwatched.stop();
+
+    // Under a 60-day window (threaded via the registry's third constructor
+    // argument) the same 30-day-old store counts as active and gets watched.
+    const watched = new SessionRegistry([source], undefined, { activeDays: 60 });
+    await watched.start();
+    const laterWatched = new Promise<void>(resolve => {
+      watched.on('session-created', s => {
+        if (s.id === 'sess-later-watched') resolve();
+      });
+    });
+    await writeFile(join(dir, 'later2.jsonl'), JSON.stringify({
+      type: 'user', uuid: 'u-later2', timestamp: '2026-08-21T12:00:00Z',
+      cwd: '/workspace', sessionId: 'sess-later-watched',
+      message: { role: 'user', content: 'later2' },
+    }), 'utf-8');
+    await laterWatched;
+    await watched.stop();
+  }, 10_000);
 });

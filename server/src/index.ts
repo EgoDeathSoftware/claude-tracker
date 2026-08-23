@@ -5,6 +5,7 @@ import { loadSources } from './sources.js';
 import { TrackerDB } from './db.js';
 import { buildApp } from './routes.js';
 import { startAutoSummarizePoller } from './auto-summarize.js';
+import { parseOptionalNumberEnv } from './env-config.js';
 
 const sourcesConfigPath = process.env['SOURCES_CONFIG']
   ?? join(process.cwd(), 'config', 'sources.json');
@@ -13,18 +14,6 @@ const llmConfigPath = process.env['LLM_CONFIG']
 const dataDir = process.env['DATA_DIR']
   ?? join(process.env['HOME'] ?? '.', '.claude', 'tracker');
 const port = Number(process.env['PORT'] ?? 3001);
-
-/** Parses an optional numeric env var, warning and falling back on a malformed value. */
-function parseOptionalNumberEnv(name: string): number | undefined {
-  const raw = process.env[name];
-  if (raw === undefined) return undefined;
-  const parsed = Number(raw);
-  if (Number.isNaN(parsed)) {
-    console.warn(`[server] ignoring invalid ${name} "${raw}"; using the default`);
-    return undefined;
-  }
-  return parsed;
-}
 
 const storeActiveDays = parseOptionalNumberEnv('STORE_ACTIVE_DAYS');
 const storePollMs = parseOptionalNumberEnv('STORE_POLL_MS');
