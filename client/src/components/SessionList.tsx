@@ -118,10 +118,17 @@ export function SessionList({
                   {sources.length > 1 && source && (
                     <>
                       <SourceKindDots kinds={[source.kind]} />
-                      <span className="px-1.5 py-0.5 rounded text-[9px]
-                        font-medium bg-gray-100 text-gray-600 uppercase
-                        tracking-wide">
-                        {source.name}
+                      <span
+                        title={source.location === 'container'
+                          ? `container: ${source.origin?.container ?? source.name}`
+                          : source.name}
+                        className="px-1.5 py-0.5 rounded text-[9px] font-medium
+                          bg-gray-100 text-gray-600 uppercase tracking-wide
+                          max-w-[7rem] truncate"
+                      >
+                        {source.location === 'container'
+                          ? (source.origin?.container ?? source.name)
+                          : source.name}
                       </span>
                     </>
                   )}
