@@ -16,3 +16,7 @@ server/config/sources.json
 
 # LLM endpoint config (may contain an API key)
 server/config/llm.json
+
+# Python toolchain artifacts (tools/sessionkit)
+__pycache__/
+*.pyc

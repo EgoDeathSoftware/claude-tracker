@@ -40,6 +40,31 @@ watched on the next poll (`STORE_POLL_MS`-driven, default 30s). The sidebar gain
 "Containers" checkbox pair (only when both locations are present) alongside the kind pair; the same filter is
 available server-side via `?locations=host,container`, combinable with `?kinds=`.
 
+## sessionkit (`tools/sessionkit/`)
+
+A **separate, self-contained Python toolkit** that analyses Claude Code transcripts from the
+command line — the analysis counterpart to the tracker's UI. It backs a set of session-analysis
+skills (`error-patterns` shipped; see `tools/sessionkit/PLAN.md` for the remaining phases).
+
+It is deliberately **not** part of the pnpm workspace and shares no code with `server/`:
+
+- **Stdlib Python only** (3.11+). No pip, no venv, no network. The skills must work from any
+  session, including when the dev container is down and `pnpm`/`ruff`/`pytest` are unavailable.
+- **Runs on the host**, unlike every `pnpm` command in this repo. `tools/sessionkit/sk <cmd>`.
+- **Duplicates transcript parsing on purpose.** Reusing `server/src/parser.ts` would couple
+  every skill to `docker compose` being up, or to the HTTP API, which serves UI-shaped
+  `Session` objects rather than error clusters. See PLAN.md §3.3.
+- **Carries its own pricing table.** `server/src/pricing.ts` predates the Claude 5 family, so
+  `claude-sonnet-5` sessions fall through to a Sonnet-4 default there. Keep the two in mind
+  when comparing cost figures between the UI and `sk cost`.
+- **Read-only**, except its own cache at `~/.cache/sessionkit/cache.db` (gitignored by
+  location, holds redacted previews). `~/.claude/tracker/tracker.db` is opened `mode=ro`.
+
+Two transcript facts that are easy to miss and cost 42% of the corpus if you do: subagent
+transcripts live at `projects/<project>/<parent-session>/subagents/agent-*.jsonl` (one level
+deeper than top-level sessions), and they record the **parent's** `sessionId` — their own
+identity is `agentId`.
+
 ## Key Conventions
 
 - TypeScript strict mode with `exactOptionalPropertyTypes` — optional props must include `| undefined` (e.g., `foo?: string | undefined`)
@@ -62,6 +87,10 @@ pnpm lint                   # Lint with oxlint
 pnpm --filter @claude-tracker/server build    # Server only
 pnpm --filter @claude-tracker/server test     # Server tests only
 cd client && npx tsc --noEmit --allowImportingTsExtensions  # Client typecheck
+
+# sessionkit (tools/sessionkit) — runs on the HOST, not in the container
+tools/sessionkit/sk doctor                                        # what it can see
+cd tools/sessionkit && PYTHONPATH=. python3 -m unittest discover -s tests -t .
 ```
 
 ## File Layout
@@ -114,6 +143,13 @@ Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest ru
 - `llm-config.test.ts` — 5 tests for the LLM config reader/writer, including malformed-JSON fallback.
 
 Test files use relative imports (`../src/parser.ts`) which is necessary for NodeNext module resolution. A pre-tool hook blocks relative imports in source files but test files require them.
+
+**sessionkit tests are separate** — stdlib `unittest`, not vitest, and they run on the host:
+`cd tools/sessionkit && PYTHONPATH=. python3 -m unittest discover -s tests -t .` (84 tests
+across parsing, error taxonomy, anomaly detectors, pricing, budget enforcement, and end-to-end
+ingestion). Fixtures are built inline in `tests/fixtures.py` rather than committed, so each
+test shows the transcript shape it asserts against; every anomaly detector has a positive **and**
+a negative case.
 
 ## Important Notes
 
