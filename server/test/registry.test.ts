@@ -1,9 +1,10 @@
 import { describe, it, expect, afterEach } from 'vitest';
-import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
+import { mkdtemp, mkdir, writeFile, rm, utimes } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import { SessionRegistry } from '../src/registry.js';
+import { TrackerDB } from '../src/db.js';
 import type { Source } from '../src/sources.js';
 
 // Mirrors the real opencode DB (verified against a live install) - parts
@@ -105,8 +106,14 @@ describe('SessionRegistry', () => {
     );
 
     const sources: Source[] = [
-      { id: 'wsl', name: 'WSL', path: wslDir, kind: 'claude-code' },
-      { id: 'windows', name: 'Windows', path: winDir, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: wslDir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'windows', name: 'Windows', path: winDir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ];
     const reg = new SessionRegistry(sources);
     await reg.start();
@@ -145,7 +152,10 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: dir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -171,7 +181,10 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: dir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -202,7 +215,10 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'wsl', name: 'WSL', path: dir, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: dir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -227,8 +243,14 @@ describe('SessionRegistry', () => {
     );
 
     const reg = new SessionRegistry([
-      { id: 'gone', name: 'Gone', path: '/definitely/not/here', kind: 'claude-code' },
-      { id: 'ok', name: 'OK', path: ok, kind: 'claude-code' },
+      {
+        id: 'gone', name: 'Gone', path: '/definitely/not/here',
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'ok', name: 'OK', path: ok,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -260,8 +282,14 @@ describe('SessionRegistry', () => {
     });
 
     const reg = new SessionRegistry([
-      { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
-      { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+      {
+        id: 'claude', name: 'Claude Code', path: claudeDir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'opencode', name: 'OpenCode', path: opencodeDir,
+        kind: 'opencode', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
@@ -300,16 +328,22 @@ describe('SessionRegistry', () => {
     });
 
     const reg = new SessionRegistry([
-      { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
-      { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+      {
+        id: 'claude', name: 'Claude Code', path: claudeDir,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'opencode', name: 'OpenCode', path: opencodeDir,
+        kind: 'opencode', layout: 'single', location: 'host',
+      },
     ]);
     await reg.start();
     try {
-      expect(reg.getSessions(undefined, ['opencode'])).toHaveLength(1);
-      expect(reg.getSessions(undefined, ['opencode'])[0]!.sourceId).toBe('opencode');
+      expect(reg.getSessions(undefined, { kinds: ['opencode'] })).toHaveLength(1);
+      expect(reg.getSessions(undefined, { kinds: ['opencode'] })[0]!.sourceId).toBe('opencode');
 
-      expect(reg.getProjects(['claude-code'])).toHaveLength(1);
-      expect(reg.getProjects(['claude-code'])[0]!.sources).toEqual(['claude']);
+      expect(reg.getProjects({ kinds: ['claude-code'] })).toHaveLength(1);
+      expect(reg.getProjects({ kinds: ['claude-code'] })[0]!.sources).toEqual(['claude']);
 
       // Omitting kinds (or passing undefined) returns everything, unchanged
       // from today's behavior.
@@ -319,4 +353,308 @@ describe('SessionRegistry', () => {
       await reg.stop();
     }
   });
+});
+
+describe('runtime source churn', () => {
+  const makeStore = async (root: string, name: string, sessionId: string) => {
+    const projectDir = join(root, name, 'projects', '-workspace');
+    await mkdir(projectDir, { recursive: true });
+    await writeFile(join(projectDir, `${sessionId}.jsonl`), JSON.stringify({
+      type: 'user', uuid: `u-${sessionId}`, timestamp: '2026-08-21T10:00:00Z',
+      cwd: '/workspace', sessionId,
+      message: { role: 'user', content: 'hi' },
+    }), 'utf-8');
+    return join(root, name);
+  };
+
+  it('adds a source at runtime and ingests its sessions', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-add-'));
+    const storePath = await makeStore(root, 'demo', 'sess-demo');
+    const registry = new SessionRegistry([]);
+    await registry.start();
+    expect(registry.getSessions()).toHaveLength(0);
+
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: storePath,
+      kind: 'claude-code', layout: 'single', location: 'container',
+      origin: { container: 'demo', hostWorkspace: '/host/demo' },
+    }, { watch: false });
+
+    const sessions = registry.getSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.projectId).toBe('demo');
+    expect(registry.getSources().map(s => s.id)).toContain('agents:demo');
+    await registry.stop();
+  });
+
+  it('emits sources-changed on add and remove', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-evt-'));
+    const storePath = await makeStore(root, 'demo', 'sess-evt');
+    const registry = new SessionRegistry([]);
+    await registry.start();
+
+    let changes = 0;
+    registry.on('sources-changed', () => { changes++; });
+
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: storePath,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    expect(changes).toBe(1);
+
+    await registry.removeSource('agents:demo');
+    expect(changes).toBe(2);
+    await registry.stop();
+  });
+
+  it('drops the removed source sessions and leaves others intact', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-rm-'));
+    const a = await makeStore(root, 'alpha', 'sess-alpha');
+    const b = await makeStore(root, 'beta', 'sess-beta');
+    const registry = new SessionRegistry([]);
+    await registry.start();
+
+    await registry.addSource({
+      id: 'agents:alpha', name: 'alpha', path: a,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    await registry.addSource({
+      id: 'agents:beta', name: 'beta', path: b,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    expect(registry.getSessions()).toHaveLength(2);
+
+    await registry.removeSource('agents:alpha');
+    const remaining = registry.getSessions();
+    expect(remaining).toHaveLength(1);
+    expect(remaining[0]?.sourceId).toBe('agents:beta');
+    expect(registry.getSources().map(s => s.id)).toEqual(['agents:beta']);
+    await registry.stop();
+  });
+
+  it('removing an unknown source is a no-op', async () => {
+    const registry = new SessionRegistry([]);
+    await registry.start();
+    await expect(registry.removeSource('nope')).resolves.toBeUndefined();
+    await registry.stop();
+  });
+
+  it('removes SQLite state when a source is removed', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-db-rm-'));
+    const storePath = await makeStore(root, 'demo', 'sess-searchme');
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: storePath,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    expect(registry.getSessions()).toHaveLength(1);
+    expect(db.search('hi')).toHaveLength(1);
+
+    await registry.removeSource('agents:demo');
+    expect(db.search('hi')).toHaveLength(0);
+    await registry.stop();
+  });
+
+  it('replaces a source cleanly when addSource is called twice sequentially with the same id', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-add-twice-'));
+    const first = await makeStore(root, 'first', 'sess-first');
+    const second = await makeStore(root, 'second', 'sess-second');
+    const registry = new SessionRegistry([]);
+    await registry.start();
+
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: first,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+    await registry.addSource({
+      id: 'agents:demo', name: 'demo', path: second,
+      kind: 'claude-code', layout: 'single', location: 'container',
+    }, { watch: false });
+
+    const sources = registry.getSources().filter(s => s.id === 'agents:demo');
+    expect(sources).toHaveLength(1);
+    expect(sources[0]?.path).toBe(second);
+
+    const sessions = registry.getSessions();
+    expect(sessions).toHaveLength(1);
+    expect(sessions[0]?.id).toBe('sess-second');
+    await registry.stop();
+  });
+});
+
+describe('location filtering', () => {
+  const seed = async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-loc-'));
+    const mk = async (name: string, sessionId: string) => {
+      const dir = join(root, name, 'projects', '-workspace');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${sessionId}.jsonl`), JSON.stringify({
+        type: 'user', uuid: `u-${sessionId}`, timestamp: '2026-08-21T10:00:00Z',
+        cwd: '/workspace', sessionId,
+        message: { role: 'user', content: 'hi' },
+      }), 'utf-8');
+      return join(root, name);
+    };
+    const registry = new SessionRegistry([]);
+    await registry.start();
+    await registry.addSource({
+      id: 'host-src', name: 'Host', path: await mk('hostish', 'sess-host'),
+      kind: 'claude-code', layout: 'single', location: 'host',
+      origin: { container: 'hostish', hostWorkspace: '/host/alpha' },
+    }, { watch: false });
+    await registry.addSource({
+      id: 'agents:beta', name: 'beta', path: await mk('beta', 'sess-beta'),
+      kind: 'claude-code', layout: 'single', location: 'container',
+      origin: { container: 'beta', hostWorkspace: '/host/beta' },
+    }, { watch: false });
+    return registry;
+  };
+
+  it('returns everything with no filter', async () => {
+    const r = await seed();
+    expect(r.getSessions()).toHaveLength(2);
+    expect(r.getProjects()).toHaveLength(2);
+    await r.stop();
+  });
+
+  it('filters sessions by location', async () => {
+    const r = await seed();
+    const containers = r.getSessions(undefined, { locations: ['container'] });
+    expect(containers).toHaveLength(1);
+    expect(containers[0]?.sourceId).toBe('agents:beta');
+    await r.stop();
+  });
+
+  it('filters projects by location', async () => {
+    const r = await seed();
+    const hosts = r.getProjects({ locations: ['host'] });
+    expect(hosts.map(p => p.id)).toEqual(['alpha']);
+    await r.stop();
+  });
+
+  it('combines kinds and locations', async () => {
+    const r = await seed();
+    expect(r.getSessions(undefined, {
+      kinds: ['claude-code'], locations: ['container'],
+    })).toHaveLength(1);
+    expect(r.getSessions(undefined, {
+      kinds: ['opencode'], locations: ['container'],
+    })).toHaveLength(0);
+    await r.stop();
+  });
+
+  it('an empty locations array matches nothing', async () => {
+    const r = await seed();
+    expect(r.getSessions(undefined, { locations: [] })).toHaveLength(0);
+    await r.stop();
+  });
+});
+
+describe('store-set sources', () => {
+  it('expands a store-set source into child sources at start', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-storeset-'));
+    for (const name of ['alpha', 'beta']) {
+      const dir = join(root, name, 'projects', '-workspace');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, 's.jsonl'), JSON.stringify({
+        type: 'user', uuid: `u-${name}`, timestamp: '2026-08-21T10:00:00Z',
+        cwd: '/workspace', sessionId: `sess-${name}`,
+        message: { role: 'user', content: 'hi' },
+      }), 'utf-8');
+      await writeFile(join(root, name, '.tracker-origin.json'), JSON.stringify({
+        container: name, hostWorkspace: `/home/dave/${name}`,
+      }), 'utf-8');
+    }
+
+    const registry = new SessionRegistry([{
+      id: 'agents', name: 'Agent Containers', path: root,
+      kind: 'claude-code', layout: 'store-set', location: 'host',
+    }]);
+    await registry.start();
+
+    const ids = registry.getSources().map(s => s.id).sort();
+    expect(ids).toEqual(['agents:alpha', 'agents:beta']);
+    expect(registry.getProjects().map(p => p.id).sort()).toEqual(['alpha', 'beta']);
+    await registry.stop();
+  });
+
+  // Indirect check: there's no public accessor for the watchers map, so this
+  // confirms the parent id never surfaces via getSources() rather than
+  // asserting directly that no AgentWatcher was constructed for it.
+  it('excludes the store-set parent from getSources() and the ordinary watcher loop', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-parent-'));
+    const registry = new SessionRegistry([{
+      id: 'agents', name: 'Agent Containers', path: root,
+      kind: 'claude-code', layout: 'store-set', location: 'host',
+    }]);
+    await registry.start();
+    expect(registry.getSources().map(s => s.id)).not.toContain('agents');
+    await registry.stop();
+  });
+
+  // Proves the registry's third constructor argument actually reaches
+  // StoreSetWatcher, since an omitted optional argument compiles fine either
+  // way -- TypeScript alone can't catch a dropped pass-through here.
+  it('threads storeSetOptions.activeDays down to every StoreSetWatcher', async () => {
+    const root = await mkdtemp(join(tmpdir(), 'registry-activedays-'));
+    const dir = join(root, 'stale', 'projects', '-workspace');
+    await mkdir(dir, { recursive: true });
+    const jsonlPath = join(dir, 's.jsonl');
+    await writeFile(jsonlPath, JSON.stringify({
+      type: 'user', uuid: 'u-stale', timestamp: '2026-08-21T10:00:00Z',
+      cwd: '/workspace', sessionId: 'sess-stale',
+      message: { role: 'user', content: 'hi' },
+    }), 'utf-8');
+    const markerPath = join(root, 'stale', '.tracker-origin.json');
+    await writeFile(markerPath, JSON.stringify({
+      container: 'stale', hostWorkspace: '/home/dave/stale',
+    }), 'utf-8');
+    const aged = new Date(Date.now() - 30 * 86_400_000);
+    await utimes(jsonlPath, aged, aged);
+    await utimes(markerPath, aged, aged);
+
+    const source = {
+      id: 'agents', name: 'Agent Containers', path: root,
+      kind: 'claude-code' as const, layout: 'store-set' as const, location: 'host' as const,
+    };
+
+    // Under the default 14-day window the store is stale and unwatched, so a
+    // file written after start() is never picked up.
+    const unwatched = new SessionRegistry([source]);
+    await unwatched.start();
+    const laterUnwatched = new Promise<void>(resolve => {
+      unwatched.on('session-created', () => resolve());
+    });
+    await writeFile(join(dir, 'later.jsonl'), JSON.stringify({
+      type: 'user', uuid: 'u-later', timestamp: '2026-08-21T11:00:00Z',
+      cwd: '/workspace', sessionId: 'sess-later-unwatched',
+      message: { role: 'user', content: 'later' },
+    }), 'utf-8');
+    const sawEvent = await Promise.race([
+      laterUnwatched.then(() => true),
+      new Promise<boolean>(resolve => setTimeout(() => resolve(false), 1500)),
+    ]);
+    expect(sawEvent).toBe(false);
+    await unwatched.stop();
+
+    // Under a 60-day window (threaded via the registry's third constructor
+    // argument) the same 30-day-old store counts as active and gets watched.
+    const watched = new SessionRegistry([source], undefined, { activeDays: 60 });
+    await watched.start();
+    const laterWatched = new Promise<void>(resolve => {
+      watched.on('session-created', s => {
+        if (s.id === 'sess-later-watched') resolve();
+      });
+    });
+    await writeFile(join(dir, 'later2.jsonl'), JSON.stringify({
+      type: 'user', uuid: 'u-later2', timestamp: '2026-08-21T12:00:00Z',
+      cwd: '/workspace', sessionId: 'sess-later-watched',
+      message: { role: 'user', content: 'later2' },
+    }), 'utf-8');
+    await laterWatched;
+    await watched.stop();
+  }, 10_000);
 });

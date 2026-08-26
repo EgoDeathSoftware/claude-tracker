@@ -1,0 +1,11 @@
+.git
+.worktrees
+.pnpm-store
+AGENTS.md
+node_modules
+**/node_modules
+**/dist
+**/*.log
+server/config/sources.json
+server/data
+data

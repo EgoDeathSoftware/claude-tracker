@@ -2,9 +2,9 @@ import { Hono } from 'hono';
 import type { Context } from 'hono';
 import { cors } from 'hono/cors';
 import { streamSSE } from 'hono/streaming';
-import type { SessionRegistry } from './registry.ts';
+import type { SessionRegistry, SessionFilter } from './registry.ts';
 import type { TrackerDB } from './db.ts';
-import type { SourceKind } from './sources.ts';
+import type { SourceKind, SourceLocation } from './sources.ts';
 import { readRawLines } from './parser.js';
 import {
   readSettings,
@@ -64,22 +64,38 @@ export function buildApp(
 
   // --- Projects & Sessions ---
 
+  // A present-but-empty param (?kinds=) means "the user deselected every
+  // checkbox" and must filter to zero results, distinct from an absent
+  // param meaning "no filter requested" — so this checks presence, not
+  // truthiness.
   function parseKinds(c: Context): SourceKind[] | undefined {
     const kindsParam = c.req.query('kinds');
-    if (!kindsParam) return undefined;
+    if (kindsParam === undefined) return undefined;
     return kindsParam.split(',').filter(
       (k): k is SourceKind => k === 'claude-code' || k === 'opencode',
     );
   }
 
-  app.get('/api/projects', c => c.json(registry.getProjects(parseKinds(c))));
+  function parseLocations(c: Context): SourceLocation[] | undefined {
+    const param = c.req.query('locations');
+    if (param === undefined) return undefined;
+    return param.split(',').filter(
+      (l): l is SourceLocation => l === 'host' || l === 'container',
+    );
+  }
+
+  function parseFilter(c: Context): SessionFilter {
+    return { kinds: parseKinds(c), locations: parseLocations(c) };
+  }
+
+  app.get('/api/projects', c => c.json(registry.getProjects(parseFilter(c))));
 
   app.get('/api/sources', c => c.json(registry.getSources()));
 
   app.get('/api/sessions', c => {
     const projectId = c.req.query('projectId');
     const tag = c.req.query('tag');
-    let sessions = registry.getSessions(projectId, parseKinds(c));
+    let sessions = registry.getSessions(projectId, parseFilter(c));
     if (tag) {
       const tagSessionIds = new Set(db.getSessionsByTag(tag));
       sessions = sessions.filter(s => tagSessionIds.has(s.id));
@@ -362,9 +378,13 @@ export function buildApp(
           data: JSON.stringify(session),
         });
       };
+      const onSourcesChanged = (): void => {
+        void stream.writeSSE({ event: 'sources-changed', data: '{}' });
+      };
 
       registry.on('session-created', onCreate);
       registry.on('session-updated', onUpdate);
+      registry.on('sources-changed', onSourcesChanged);
 
       const interval = setInterval(() => {
         void stream.writeSSE({ data: 'ping' });
@@ -375,6 +395,7 @@ export function buildApp(
           clearInterval(interval);
           registry.off('session-created', onCreate);
           registry.off('session-updated', onUpdate);
+          registry.off('sources-changed', onSourcesChanged);
           resolve();
         });
       });

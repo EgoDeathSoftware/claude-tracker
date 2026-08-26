@@ -1,13 +1,20 @@
 import { readFile, stat } from 'node:fs/promises';
+import type { StoreOrigin } from './store-origin.js';
 
 export type SourceKind = 'claude-code' | 'opencode';
+export type SourceLocation = 'host' | 'container';
+export type SourceLayout = 'single' | 'store-set';
 
 export interface Source {
   id: string;
   name: string;
   path: string;
   kind: SourceKind;
+  layout: SourceLayout;
+  location: SourceLocation;
   configPath?: string | undefined;
+  origin?: StoreOrigin | undefined;
+  parentId?: string | undefined;
 }
 
 const ID_PATTERN = /^[a-z0-9_-]+$/;
@@ -34,7 +41,10 @@ export async function loadSources(
       `[sources] ${configPath} not found; `
       + `using single source: ${fallback}`,
     );
-    return [{ id: 'default', name: 'Default', path: fallback, kind: 'claude-code' }];
+    return [{
+      id: 'default', name: 'Default', path: fallback,
+      kind: 'claude-code', layout: 'single', location: 'host',
+    }];
   }
 
   let parsed: unknown;
@@ -73,6 +83,7 @@ export async function loadSources(
       name?: unknown;
       path?: unknown;
       kind?: unknown;
+      layout?: unknown;
       configPath?: unknown;
     };
     if (typeof s.id !== 'string' || !ID_PATTERN.test(s.id)) {
@@ -97,6 +108,17 @@ export async function loadSources(
         + `${String(s.kind)}`,
       );
     }
+    let layout: SourceLayout;
+    if (s.layout === undefined) {
+      layout = 'single';
+    } else if (s.layout === 'single' || s.layout === 'store-set') {
+      layout = s.layout;
+    } else {
+      throw new Error(
+        `[sources] invalid layout (must be "single" or "store-set"): `
+        + `${String(s.layout)}`,
+      );
+    }
     let configPath: string | undefined;
     if (s.configPath !== undefined) {
       if (typeof s.configPath !== 'string' || s.configPath.length === 0) {
@@ -110,8 +132,8 @@ export async function loadSources(
     seen.add(s.id);
     valid.push(
       configPath === undefined
-        ? { id: s.id, name: s.name, path: s.path, kind }
-        : { id: s.id, name: s.name, path: s.path, kind, configPath },
+        ? { id: s.id, name: s.name, path: s.path, kind, layout, location: 'host' }
+        : { id: s.id, name: s.name, path: s.path, kind, layout, location: 'host', configPath },
     );
   }
 

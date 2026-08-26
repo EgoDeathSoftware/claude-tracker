@@ -160,6 +160,43 @@ export class TrackerDB {
       .run(session.id, session.projectId, session.title, content);
   }
 
+  /**
+   * Remove all SQLite state for a session: its FTS row, its tag links (and
+   * any tags left with zero sessions attached), and its cached AI summary.
+   * Used when a source is deregistered so its sessions stop showing up in
+   * search results and don't leave orphaned tags/summaries behind.
+   */
+  removeSession(sessionId: string): void {
+    const deleteFts = this.db.prepare(
+      'DELETE FROM session_fts WHERE session_id = ?',
+    );
+    const getTagIds = this.db.prepare(
+      'SELECT tag_id FROM session_tags WHERE session_id = ?',
+    );
+    const deleteSessionTags = this.db.prepare(
+      'DELETE FROM session_tags WHERE session_id = ?',
+    );
+    const deleteOrphanTag = this.db.prepare(`
+      DELETE FROM tags WHERE id = ?
+      AND NOT EXISTS (SELECT 1 FROM session_tags WHERE tag_id = ?)
+    `);
+    const deleteSummary = this.db.prepare(
+      'DELETE FROM session_summaries WHERE session_id = ?',
+    );
+
+    const txn = this.db.transaction((sid: string) => {
+      deleteFts.run(sid);
+      const tagIds = getTagIds.all(sid) as { tag_id: number }[];
+      deleteSessionTags.run(sid);
+      for (const { tag_id } of tagIds) {
+        deleteOrphanTag.run(tag_id, tag_id);
+      }
+      deleteSummary.run(sid);
+    });
+
+    txn(sessionId);
+  }
+
   // --- Search ---
 
   search(query: string, projectId?: string): SearchResult[] {

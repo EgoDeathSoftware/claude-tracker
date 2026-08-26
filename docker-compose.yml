@@ -16,10 +16,13 @@ services:
       - ${CLAUDE_DIR_WSL}:/claude/wsl:ro
       - ${OPENCODE_DATA_DIR}:/opencode/data:ro
       - ${OPENCODE_CONFIG_DIR}:/opencode/config:ro
+      - ${AGENT_CLAUDE_ROOT}:/claude/agents:ro
       - tracker-data:/app/data
     environment:
       - DATA_DIR=/app/data
       - PORT=3001
+      - STORE_ACTIVE_DAYS=${STORE_ACTIVE_DAYS:-}
+      - STORE_POLL_MS=${STORE_POLL_MS:-}
     restart: unless-stopped
 
 volumes:

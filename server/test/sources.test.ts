@@ -35,8 +35,14 @@ describe('loadSources', () => {
     );
     const out = await loadSources(cfg, undefined);
     expect(out).toEqual([
-      { id: 'wsl', name: 'WSL', path: src1, kind: 'claude-code' },
-      { id: 'windows', name: 'Windows', path: src2, kind: 'claude-code' },
+      {
+        id: 'wsl', name: 'WSL', path: src1,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
+      {
+        id: 'windows', name: 'Windows', path: src2,
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
   });
 
@@ -46,7 +52,10 @@ describe('loadSources', () => {
     const missing = join(dir, 'nope.json');
     const out = await loadSources(missing, '/tmp/fake-claude');
     expect(out).toEqual([
-      { id: 'default', name: 'Default', path: '/tmp/fake-claude', kind: 'claude-code' },
+      {
+        id: 'default', name: 'Default', path: '/tmp/fake-claude',
+        kind: 'claude-code', layout: 'single', location: 'host',
+      },
     ]);
   });
 
@@ -105,7 +114,10 @@ describe('loadSources', () => {
     );
     const out = await loadSources(cfg, undefined);
     expect(out).toEqual([
-      { id: 'oc', name: 'OpenCode', path: src, kind: 'opencode', configPath: cfgDir },
+      {
+        id: 'oc', name: 'OpenCode', path: src, kind: 'opencode', configPath: cfgDir,
+        layout: 'single', location: 'host',
+      },
     ]);
   });
 
@@ -185,5 +197,58 @@ describe('loadSources', () => {
     await writeFile(cfg, 'null');
     await expect(loadSources(cfg, undefined))
       .rejects.toThrow(/config root must be an object/);
+  });
+});
+
+describe('layout and location', () => {
+  const cleanup: string[] = [];
+  afterEach(async () => {
+    for (const d of cleanup.splice(0)) {
+      await rm(d, { recursive: true, force: true });
+    }
+  });
+
+  const layoutDir = async (): Promise<string> => {
+    const dir = await mkdtemp(join(tmpdir(), 'sources-layout-'));
+    cleanup.push(dir);
+    return dir;
+  };
+
+  it('defaults layout to single and location to host', async () => {
+    const dir = await layoutDir();
+    const cfg = join(dir, 'sources.json');
+    await writeFile(cfg, JSON.stringify({
+      sources: [{ id: 'wsl', name: 'WSL', path: dir }],
+    }), 'utf-8');
+    const sources = await loadSources(cfg, undefined);
+    expect(sources[0]?.layout).toBe('single');
+    expect(sources[0]?.location).toBe('host');
+  });
+
+  it('accepts an explicit store-set layout', async () => {
+    const dir = await layoutDir();
+    const cfg = join(dir, 'sources.json');
+    await writeFile(cfg, JSON.stringify({
+      sources: [{ id: 'agents', name: 'Agents', path: dir, layout: 'store-set' }],
+    }), 'utf-8');
+    const sources = await loadSources(cfg, undefined);
+    expect(sources[0]?.layout).toBe('store-set');
+    expect(sources[0]?.location).toBe('host');
+  });
+
+  it('rejects an unknown layout', async () => {
+    const dir = await layoutDir();
+    const cfg = join(dir, 'sources.json');
+    await writeFile(cfg, JSON.stringify({
+      sources: [{ id: 'agents', name: 'Agents', path: dir, layout: 'nested' }],
+    }), 'utf-8');
+    await expect(loadSources(cfg, undefined)).rejects.toThrow(/invalid layout/);
+  });
+
+  it('gives the env-var fallback source the defaults', async () => {
+    const dir = await layoutDir();
+    const sources = await loadSources(join(dir, 'absent.json'), dir);
+    expect(sources[0]?.layout).toBe('single');
+    expect(sources[0]?.location).toBe('host');
   });
 });

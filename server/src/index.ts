@@ -5,6 +5,7 @@ import { loadSources } from './sources.js';
 import { TrackerDB } from './db.js';
 import { buildApp } from './routes.js';
 import { startAutoSummarizePoller } from './auto-summarize.js';
+import { parseOptionalNumberEnv } from './env-config.js';
 
 const sourcesConfigPath = process.env['SOURCES_CONFIG']
   ?? join(process.cwd(), 'config', 'sources.json');
@@ -13,6 +14,9 @@ const llmConfigPath = process.env['LLM_CONFIG']
 const dataDir = process.env['DATA_DIR']
   ?? join(process.env['HOME'] ?? '.', '.claude', 'tracker');
 const port = Number(process.env['PORT'] ?? 3001);
+
+const storeActiveDays = parseOptionalNumberEnv('STORE_ACTIVE_DAYS');
+const storePollMs = parseOptionalNumberEnv('STORE_POLL_MS');
 
 const sources = await loadSources(
   sourcesConfigPath,
@@ -26,7 +30,9 @@ if (sources.length === 0) {
 }
 
 const db = new TrackerDB(join(dataDir, 'tracker.db'));
-const registry = new SessionRegistry(sources, db);
+const registry = new SessionRegistry(
+  sources, db, { activeDays: storeActiveDays, pollMs: storePollMs },
+);
 await registry.start();
 startAutoSummarizePoller(registry, db, llmConfigPath);
 

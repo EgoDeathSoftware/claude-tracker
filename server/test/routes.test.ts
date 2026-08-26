@@ -63,6 +63,10 @@ async function seedOpenCodeDb(
   db.close();
 }
 
+function makeTestDb(): TrackerDB {
+  return new TrackerDB(':memory:');
+}
+
 describe('routes', () => {
   const cleanup: string[] = [];
   const registries: SessionRegistry[] = [];
@@ -80,7 +84,7 @@ describe('routes', () => {
     const registry = new SessionRegistry(sources);
     registries.push(registry);
     await registry.start();
-    const db = new TrackerDB(':memory:');
+    const db = makeTestDb();
     const app = buildApp(registry, db, '/tmp/routes-test-llm-config-nonexistent.json');
     return { app, registry };
   }
@@ -100,8 +104,14 @@ describe('routes', () => {
       });
 
       const { app } = await buildTestApp([
-        { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
-        { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+        {
+          id: 'claude', name: 'Claude Code', path: claudeDir,
+          kind: 'claude-code', layout: 'single', location: 'host',
+        },
+        {
+          id: 'opencode', name: 'OpenCode', path: opencodeDir,
+          kind: 'opencode', layout: 'single', location: 'host',
+        },
       ]);
 
       const allSessions = await app.request('/api/sessions').then(r => r.json());
@@ -127,7 +137,10 @@ describe('routes', () => {
       });
 
       const { app } = await buildTestApp([
-        { id: 'opencode', name: 'OpenCode', path: opencodeDir, kind: 'opencode' },
+        {
+          id: 'opencode', name: 'OpenCode', path: opencodeDir,
+          kind: 'opencode', layout: 'single', location: 'host',
+        },
       ]);
 
       const res = await app.request('/api/sessions/oc-sess/raw');
@@ -147,7 +160,10 @@ describe('routes', () => {
       );
 
       const { app } = await buildTestApp([
-        { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
+        {
+          id: 'claude', name: 'Claude Code', path: claudeDir,
+          kind: 'claude-code', layout: 'single', location: 'host',
+        },
       ]);
 
       const res = await app.request('/api/sessions/cc-sess/raw');
@@ -164,7 +180,10 @@ describe('routes', () => {
       cleanup.push(claudeDir);
 
       const { app } = await buildTestApp([
-        { id: 'claude', name: 'Claude Code', path: claudeDir, kind: 'claude-code' },
+        {
+          id: 'claude', name: 'Claude Code', path: claudeDir,
+          kind: 'claude-code', layout: 'single', location: 'host',
+        },
       ]);
 
       const configRes = await app.request('/api/config/opencode');
@@ -190,6 +209,7 @@ describe('routes', () => {
         {
           id: 'opencode', name: 'OpenCode', path: opencodeDataDir,
           kind: 'opencode', configPath: opencodeConfigDir,
+          layout: 'single', location: 'host',
         },
       ]);
 
@@ -215,6 +235,7 @@ describe('routes', () => {
         {
           id: 'opencode', name: 'OpenCode', path: opencodeDataDir,
           kind: 'opencode', configPath: opencodeConfigDir,
+          layout: 'single', location: 'host',
         },
       ]);
 
@@ -223,5 +244,116 @@ describe('routes', () => {
       const config = await ocConfigRes.json();
       expect(config.model).toBe('x');
     });
+  });
+});
+
+describe('location filtering over HTTP', () => {
+  const registries: SessionRegistry[] = [];
+  const cleanup: string[] = [];
+
+  afterEach(async () => {
+    for (const reg of registries.splice(0)) {
+      await reg.stop();
+    }
+    for (const d of cleanup.splice(0)) {
+      await rm(d, { recursive: true, force: true });
+    }
+  });
+
+  const seedRegistry = async () => {
+    const root = await mkdtemp(join(tmpdir(), 'routes-loc-'));
+    cleanup.push(root);
+    const mk = async (name: string, sessionId: string) => {
+      const dir = join(root, name, 'projects', '-workspace');
+      await mkdir(dir, { recursive: true });
+      await writeFile(join(dir, `${sessionId}.jsonl`), JSON.stringify({
+        type: 'user', uuid: `u-${sessionId}`, timestamp: '2026-08-21T10:00:00Z',
+        cwd: '/workspace', sessionId,
+        message: { role: 'user', content: 'hi' },
+      }), 'utf-8');
+      return join(root, name);
+    };
+    const registry = new SessionRegistry([]);
+    registries.push(registry);
+    await registry.start();
+    await registry.addSource({
+      id: 'wsl', name: 'WSL', path: await mk('hostish', 'sess-host'),
+      kind: 'claude-code', layout: 'single', location: 'host',
+      origin: { container: 'hostish', hostWorkspace: '/host/alpha' },
+    }, { watch: false });
+    await registry.addSource({
+      id: 'agents:beta', name: 'beta', path: await mk('beta', 'sess-beta'),
+      kind: 'claude-code', layout: 'single', location: 'container',
+      origin: { container: 'beta', hostWorkspace: '/host/beta' },
+    }, { watch: false });
+    return registry;
+  };
+
+  it('filters sessions by ?locations=', async () => {
+    const registry = await seedRegistry();
+    const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
+
+    const all = await (await app.request('/api/sessions')).json();
+    expect(all).toHaveLength(2);
+
+    const containers = await (await app.request('/api/sessions?locations=container')).json();
+    expect(containers).toHaveLength(1);
+    expect(containers[0].sourceId).toBe('agents:beta');
+  });
+
+  it('filters projects by ?locations=', async () => {
+    const registry = await seedRegistry();
+    const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
+    const hosts = await (await app.request('/api/projects?locations=host')).json();
+    expect(hosts.map((p: { id: string }) => p.id)).toEqual(['alpha']);
+  });
+
+  it('ignores unknown location values', async () => {
+    const registry = await seedRegistry();
+    const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
+    const res = await app.request('/api/sessions?locations=bogus');
+    expect(res.status).toBe(200);
+    expect(await res.json()).toHaveLength(0);
+  });
+
+  it('an explicitly empty ?locations= filters to nothing, unlike an absent param', async () => {
+    const registry = await seedRegistry();
+    const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
+
+    const noParam = await (await app.request('/api/sessions')).json();
+    expect(noParam).toHaveLength(2);
+
+    const emptyParam = await (await app.request('/api/sessions?locations=')).json();
+    expect(emptyParam).toHaveLength(0);
+  });
+
+  it('an explicitly empty ?kinds= filters to nothing, unlike an absent param', async () => {
+    const registry = await seedRegistry();
+    const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
+
+    const noParam = await (await app.request('/api/projects')).json();
+    expect(noParam.length).toBeGreaterThan(0);
+
+    const emptyParam = await (await app.request('/api/projects?kinds=')).json();
+    expect(emptyParam).toHaveLength(0);
+  });
+
+  it('exposes location, origin, and parentId on /api/sources', async () => {
+    const registry = await seedRegistry();
+    const gammaDir = await mkdtemp(join(tmpdir(), 'routes-loc-gamma-'));
+    cleanup.push(gammaDir);
+    await registry.addSource({
+      id: 'agents:gamma', name: 'gamma', path: gammaDir,
+      kind: 'claude-code', layout: 'single', location: 'container',
+      origin: { container: 'gamma', hostWorkspace: '/host/gamma' },
+      parentId: 'agents',
+    }, { watch: false });
+    const app = buildApp(registry, makeTestDb(), '/tmp/llm.json');
+    const sources = await (await app.request('/api/sources')).json();
+    const beta = sources.find((s: { id: string }) => s.id === 'agents:beta');
+    expect(beta.location).toBe('container');
+    expect(beta.origin.hostWorkspace).toBe('/host/beta');
+    const gamma = sources.find((s: { id: string }) => s.id === 'agents:gamma');
+    expect(gamma.parentId).toBe('agents');
   });
 });
