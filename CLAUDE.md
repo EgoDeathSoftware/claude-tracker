@@ -40,30 +40,14 @@ watched on the next poll (`STORE_POLL_MS`-driven, default 30s). The sidebar gain
 "Containers" checkbox pair (only when both locations are present) alongside the kind pair; the same filter is
 available server-side via `?locations=host,container`, combinable with `?kinds=`.
 
-## sessionkit (`tools/sessionkit/`)
+## sessionkit
 
-A **separate, self-contained Python toolkit** that analyses Claude Code transcripts from the
-command line — the analysis counterpart to the tracker's UI. It backs a set of session-analysis
-skills (`error-patterns` shipped; see `tools/sessionkit/PLAN.md` for the remaining phases).
-
-It is deliberately **not** part of the pnpm workspace and shares no code with `server/`:
-
-- **Stdlib Python only** (3.11+). No pip, no venv, no network. The skills must work from any
-  session, including when the dev container is down and `pnpm`/`ruff`/`pytest` are unavailable.
-- **Runs on the host**, unlike every `pnpm` command in this repo. `tools/sessionkit/sk <cmd>`.
-- **Duplicates transcript parsing on purpose.** Reusing `server/src/parser.ts` would couple
-  every skill to `docker compose` being up, or to the HTTP API, which serves UI-shaped
-  `Session` objects rather than error clusters. See PLAN.md §3.3.
-- **Carries its own pricing table.** `server/src/pricing.ts` predates the Claude 5 family, so
-  `claude-sonnet-5` sessions fall through to a Sonnet-4 default there. Keep the two in mind
-  when comparing cost figures between the UI and `sk cost`.
-- **Read-only**, except its own cache at `~/.cache/sessionkit/cache.db` (gitignored by
-  location, holds redacted previews). `~/.claude/tracker/tracker.db` is opened `mode=ro`.
-
-Two transcript facts that are easy to miss and cost 42% of the corpus if you do: subagent
-transcripts live at `projects/<project>/<parent-session>/subagents/agent-*.jsonl` (one level
-deeper than top-level sessions), and they record the **parent's** `sessionId` — their own
-identity is `agentId`.
+The command-line analysis toolkit that used to live at `tools/sessionkit/` has moved to its own
+repository, `claude-session-analyzer` (a sibling of this repo). It is a separate surface over the
+same `~/.claude/projects/**` corpus and shares no code with `server/`. See that repo's README.md
+and PLAN.md for details; there is nothing sessionkit-specific left in this repo to document.
+`server/src/pricing.ts`'s rates are kept in sync with that repo's `pricing.py` by hand — see the
+comment atop `pricing.ts` for the current sync date.
 
 ## Key Conventions
 
@@ -87,10 +71,6 @@ pnpm lint                   # Lint with oxlint
 pnpm --filter @claude-tracker/server build    # Server only
 pnpm --filter @claude-tracker/server test     # Server tests only
 cd client && npx tsc --noEmit --allowImportingTsExtensions  # Client typecheck
-
-# sessionkit (tools/sessionkit) — runs on the HOST, not in the container
-tools/sessionkit/sk doctor                                        # what it can see
-cd tools/sessionkit && PYTHONPATH=. python3 -m unittest discover -s tests -t .
 ```
 
 ## File Layout
@@ -110,7 +90,7 @@ cd tools/sessionkit && PYTHONPATH=. python3 -m unittest discover -s tests -t .
 - `server/src/routes.ts` — All API endpoints. `buildApp(registry, db)`. `?kinds=`/`?locations=` filter `/api/projects`/`/api/sessions` (a present-but-empty param, e.g. `?kinds=`, filters to zero results — distinct from an absent param, which applies no filter). `/api/sessions/:id/raw` branches by source kind (tails the JSONL file for claude-code, synthesizes a paginated transcript from already-parsed messages for opencode) — this needs no branch for container sessions, since `session.filePath` already points at the real bind-mounted file. Config-management routes (`/api/config/*`) target the first configured source and 503 when no source exists; the opencode config routes are registered separately so they work independent of that gate. `GET /api/sources` returns full `Source` objects including `location`/`origin`/`parentId`; the SSE stream relays the registry's `sources-changed` event so the client knows to refetch when a container appears/disappears.
 - `server/src/env-config.ts` — `parseOptionalNumberEnv(name, env?)`: absent, empty, or whitespace-only means "not set" (silent); a present-but-non-numeric value warns and falls back — both resolve to `undefined` so the caller's default takes over.
 - `server/src/index.ts` — Server entrypoint. Loads sources via `loadSources`, reads `STORE_ACTIVE_DAYS`/`STORE_POLL_MS` via `parseOptionalNumberEnv`, starts `SessionRegistry`, starts Hono server. `docker-compose.yml` forwards both into the container's `environment:` (empty string if unset in `.env`, which the parser treats as absent).
-- `server/src/pricing.ts` — Model pricing table and cost computation.
+- `server/src/pricing.ts` — Model pricing table and cost computation. Rates mirror `pricing.py` in the sibling `claude-session-analyzer` repo's sessionkit toolkit; cache rates are derived (write 1.25x input, read 0.1x) rather than stored per row. `getUnpricedModels()` records unknown ids instead of silently defaulting.
 - `client/src/App.tsx` — Root component. Manages project/session selection, config mode, compare mode, `enabledKinds`/`enabledLocations` filter state (each a `null`-sentinel array — `null` means "not yet toggled by the user", so a newly-appearing kind/location defaults to enabled).
 - `client/src/hooks/useSources.ts` — Fetches `/api/sources` on mount and again whenever a `tracker:sources-changed` window event fires (relayed from the server's `sources-changed` SSE event by `useSSE.ts`); exports `SourceKind`/`SourceLocation`/`StoreOrigin`. Consumed by `SessionList` (per-session badge), `SessionDetail` (provenance line), `ConfigPanel` (active-source label, OpenCode tab visibility), `ProjectList` (kind/location checkboxes).
 - `client/src/components/SessionList.tsx` — Renders a small source badge next to each session: the container name (from `source.origin.container`) for a container session, the source name otherwise. Shown when more than one source is configured, OR unconditionally for a container session (container identity matters even with a single source).
@@ -121,7 +101,7 @@ cd tools/sessionkit && PYTHONPATH=. python3 -m unittest discover -s tests -t .
 
 ## Testing
 
-Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest run`. Total: 206 tests across 18 files.
+Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest run`. Total: 216 tests across 19 files.
 
 - `parser.test.ts` — 38 tests covering all JSONL record types, tool extraction, file changes, hooks, permissions, subagents, raw lines.
 - `project-key.test.ts` — 13 tests for path basename extraction, cross-platform merging, and fallback behavior.
@@ -130,6 +110,7 @@ Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest ru
 - `sources.test.ts` — 14 tests for the config loader: happy path, env-var fallback, unreachable-source skip, duplicate ids, invalid ids, malformed JSON, non-array roots, null root, `kind`/`configPath`/`layout` validation and defaulting.
 - `source-watcher.test.ts` — 5 tests for per-source subagent scanning/linking and the `watch`/`transformSession` constructor options (including that the transform is applied on both the initial scan and the live-file-event path, and that `watch: false` genuinely starts no filesystem watcher).
 - `db.test.ts` — 5 tests for `TrackerDB.removeSession`: a removed session drops out of `search()`, an orphaned tag (its only session removed) is swept while a tag shared with another session survives, a cached AI summary is removed, and removing a never-indexed session doesn't throw.
+- `pricing.test.ts` — 10 tests for the model pricing table: Claude 5 rates (Fable/Opus/Sonnet/Haiku), the Opus $15/$75 → $5/$25 regression specifically, cache rates derived from the input rate (write 1.25x, read 0.1x), id normalization (`[1m]`/`-fast` suffixes, `anthropic.` prefix, dated snapshots), `<synthetic>` billed as free, and an unknown model being *both* priced at the Sonnet fallback and recorded by `getUnpricedModels()`.
 - `opencode-parser.test.ts` — 14 tests: SQLite row → `Session` mapping against the real (verified-live) schema, file-op tool mapping, malformed-row/malformed-part resilience, subagent linking via `parent_id`, `logEntries` population.
 - `opencode-watcher.test.ts` — 7 tests for polling: initial scan doesn't emit, `pollOnce()` detects new/changed sessions, no re-emit when unchanged, subagent linking, missing-DB resilience, clean `stop()`.
 - `opencode-config.test.ts` — 7 tests for the read-only config readers, including the JSONC string-literal-vs-comment edge case (`"https://..."` must not be treated as a comment).
@@ -143,13 +124,6 @@ Tests are in `server/test/`. Run with `pnpm test` or `cd server && npx vitest ru
 - `llm-config.test.ts` — 5 tests for the LLM config reader/writer, including malformed-JSON fallback.
 
 Test files use relative imports (`../src/parser.ts`) which is necessary for NodeNext module resolution. A pre-tool hook blocks relative imports in source files but test files require them.
-
-**sessionkit tests are separate** — stdlib `unittest`, not vitest, and they run on the host:
-`cd tools/sessionkit && PYTHONPATH=. python3 -m unittest discover -s tests -t .` (84 tests
-across parsing, error taxonomy, anomaly detectors, pricing, budget enforcement, and end-to-end
-ingestion). Fixtures are built inline in `tests/fixtures.py` rather than committed, so each
-test shows the transcript shape it asserts against; every anomaly detector has a positive **and**
-a negative case.
 
 ## Important Notes
 

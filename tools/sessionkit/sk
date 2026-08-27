@@ -1,9 +1,0 @@
-#!/usr/bin/env bash
-# sessionkit launcher. Zero dependencies beyond the system Python 3.11+.
-#
-# Skills invoke this by absolute path, e.g.
-#   python3 /workspace/tools/sessionkit/sk index --since 7d
-# or directly as ./sk once it is executable.
-set -euo pipefail
-here="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
-PYTHONPATH="$here${PYTHONPATH:+:$PYTHONPATH}" exec python3 -m sessionkit "$@"
