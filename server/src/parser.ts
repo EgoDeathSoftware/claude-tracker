@@ -10,6 +10,20 @@ import type {
   CostBreakdown, FileOperation, HookEvent, PermissionEvent, RecapEntry,
 } from './types.ts';
 
+/**
+ * Bumped by hand whenever parsing semantics change. Archived sessions record
+ * the version they were parsed with, so POST /api/archive/reparse can find
+ * and re-derive the stale ones from their stored raw lines.
+ */
+export const PARSER_VERSION = 1;
+
+export interface ParsedFile {
+  session: ParsedSession;
+  lines: string[];
+  size: number;
+  mtimeMs: number;
+}
+
 const LIVE_THRESHOLD_MS = 60_000;
 const DONE_THRESHOLD_MS = 5 * 60_000;
 const TITLE_MAX_LEN = 80;
@@ -237,13 +251,13 @@ function detectParentSessionId(filePath: string): string | undefined {
   return undefined;
 }
 
-export async function parseSession(
+export function parseLines(
+  lines: string[],
+  fileStat: { mtimeMs: number; birthtimeMs: number },
   filePath: string,
   sourceId: string,
   dirName: string,
-): Promise<ParsedSession> {
-  const [lines, fileStat] = await Promise.all([readLines(filePath), stat(filePath)]);
-
+): ParsedSession {
   const messages: SessionMessage[] = [];
   const logEntries: RawLogEntry[] = [];
   const toolCallMap = new Map<string, ToolCallEntry>();
@@ -480,6 +494,28 @@ export async function parseSession(
     isSubagent: parentSessionId !== undefined,
     recaps,
   };
+}
+
+export async function parseSessionDetailed(
+  filePath: string,
+  sourceId: string,
+  dirName: string,
+): Promise<ParsedFile> {
+  const [lines, fileStat] = await Promise.all([readLines(filePath), stat(filePath)]);
+  return {
+    session: parseLines(lines, fileStat, filePath, sourceId, dirName),
+    lines,
+    size: fileStat.size,
+    mtimeMs: fileStat.mtimeMs,
+  };
+}
+
+export async function parseSession(
+  filePath: string,
+  sourceId: string,
+  dirName: string,
+): Promise<ParsedSession> {
+  return (await parseSessionDetailed(filePath, sourceId, dirName)).session;
 }
 
 export async function readRawLines(

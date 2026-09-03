@@ -1,8 +1,8 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, afterEach } from 'vitest';
 import { join } from 'node:path';
 import { writeFile, mkdtemp, rm, utimes, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
-import { parseSession, readRawLines } from '../src/parser.ts';
+import { parseSession, parseSessionDetailed, PARSER_VERSION, readRawLines } from '../src/parser.ts';
 
 const FIXTURE = join(import.meta.dirname, 'fixtures/sample.jsonl');
 
@@ -548,5 +548,77 @@ describe('subagent detection', () => {
     } finally {
       await rm(dir, { recursive: true });
     }
+  });
+});
+
+describe('parseSessionDetailed', () => {
+  const parserTmp: string[] = [];
+  afterEach(async () => {
+    for (const d of parserTmp.splice(0)) await rm(d, { recursive: true, force: true });
+  });
+
+  async function writeFixture(records: unknown[]): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'parse-detail-'));
+    parserTmp.push(dir);
+    const file = join(dir, 'sess.jsonl');
+    await writeFile(file, records.map(r => JSON.stringify(r)).join('\n'), 'utf-8');
+    return file;
+  }
+
+  it('returns the same session parseSession does', async () => {
+    const file = await writeFixture([
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+        timestamp: '2026-09-01T10:00:00Z', cwd: '/workspace',
+        message: { role: 'user', content: 'hello' } },
+    ]);
+    const plain = await parseSession(file, 'wsl', '-workspace');
+    const detailed = await parseSessionDetailed(file, 'wsl', '-workspace');
+    expect(detailed.session).toEqual(plain);
+  });
+
+  it('returns the verbatim lines it parsed', async () => {
+    const records = [
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+        timestamp: '2026-09-01T10:00:00Z', cwd: '/workspace',
+        message: { role: 'user', content: 'hello' } },
+      { type: 'user', uuid: 'u2', parentUuid: 'u1', isSidechain: false,
+        timestamp: '2026-09-01T10:01:00Z',
+        message: { role: 'user', content: 'again' } },
+    ];
+    const file = await writeFixture(records);
+    const { lines } = await parseSessionDetailed(file, 'wsl', '-workspace');
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[0]!)).toEqual(records[0]);
+  });
+
+  it('reports the file size and mtime', async () => {
+    const file = await writeFixture([
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+        timestamp: '2026-09-01T10:00:00Z', cwd: '/workspace',
+        message: { role: 'user', content: 'hello' } },
+    ]);
+    const { size, mtimeMs } = await parseSessionDetailed(file, 'wsl', '-workspace');
+    expect(size).toBeGreaterThan(0);
+    expect(mtimeMs).toBeGreaterThan(0);
+  });
+
+  it('line numbers line up with logEntries', async () => {
+    const file = await writeFixture([
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+        timestamp: '2026-09-01T10:00:00Z', cwd: '/workspace',
+        message: { role: 'user', content: 'one' } },
+      { type: 'user', uuid: 'u2', parentUuid: 'u1', isSidechain: false,
+        timestamp: '2026-09-01T10:01:00Z',
+        message: { role: 'user', content: 'two' } },
+    ]);
+    const { session, lines } = await parseSessionDetailed(file, 'wsl', '-workspace');
+    for (const entry of session.logEntries) {
+      expect(lines[entry.lineNumber - 1]).toBeDefined();
+      expect(JSON.parse(lines[entry.lineNumber - 1]!).uuid).toBe(entry.uuid);
+    }
+  });
+
+  it('exports a positive PARSER_VERSION', () => {
+    expect(PARSER_VERSION).toBeGreaterThan(0);
   });
 });
