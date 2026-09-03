@@ -3,6 +3,7 @@ import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Session, AiSummary } from './types.ts';
 import { ArchiveStore } from './archive-store.js';
+import type { ArchiveStoreOptions } from './archive-store.js';
 
 const SCHEMA_VERSION = 3;
 
@@ -32,7 +33,7 @@ export class TrackerDB {
   /** Durable transcript archive. Shares this connection; see archive-store.ts. */
   readonly archive: ArchiveStore;
 
-  constructor(dbPath: string) {
+  constructor(dbPath: string, archiveOptions?: ArchiveStoreOptions) {
     mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.pragma('journal_mode = WAL');
@@ -41,7 +42,7 @@ export class TrackerDB {
     // Rebuild FTS if the schema version changed. Done eagerly here so any
     // subsequent indexSession() calls write into the up-to-date table.
     this.maybeRebuildFts();
-    this.archive = new ArchiveStore(this.db);
+    this.archive = new ArchiveStore(this.db, archiveOptions);
   }
 
   private migrate(): void {

@@ -318,3 +318,96 @@ describe("ArchiveStore raw lines", () => {
     expect(db.archive.stats().rawLineCount).toBe(2);
   });
 });
+
+describe('ArchiveStore live-write coalescing', () => {
+  const line = (n: number): string => JSON.stringify({ type: 'user', n });
+
+  function liveDb(clock: { ms: number }) {
+    return new TrackerDB(':memory:', {
+      flushMs: 15_000, now: () => clock.ms,
+    });
+  }
+
+  it('defers a body rewrite for a live session inside the flush window', () => {
+    const clock = { ms: 1_000 };
+    const db = liveDb(clock);
+    db.archive.put(make('s1', hostSource, { status: 'live', turnCount: 1 }));
+
+    clock.ms += 1_000;
+    db.archive.put(make('s1', hostSource, { status: 'live', turnCount: 2 }));
+
+    expect(db.archive.loadSummaries()[0]!.turnCount).toBe(1);
+  });
+
+  it('still appends raw lines during a deferred write', () => {
+    const clock = { ms: 1_000 };
+    const db = liveDb(clock);
+    db.archive.put(make('s1', hostSource, { status: 'live' }), { lines: [line(1)] });
+
+    clock.ms += 1_000;
+    db.archive.put(make('s1', hostSource, { status: 'live' }),
+      { lines: [line(1), line(2)] });
+
+    expect(db.archive.getRawLines('s1', 0, 10).total).toBe(2);
+  });
+
+  it('writes through once the flush window has elapsed', () => {
+    const clock = { ms: 1_000 };
+    const db = liveDb(clock);
+    db.archive.put(make('s1', hostSource, { status: 'live', turnCount: 1 }));
+
+    clock.ms += 20_000;
+    db.archive.put(make('s1', hostSource, { status: 'live', turnCount: 7 }));
+
+    expect(db.archive.loadSummaries()[0]!.turnCount).toBe(7);
+  });
+
+  it('never defers a non-live session', () => {
+    const clock = { ms: 1_000 };
+    const db = liveDb(clock);
+    db.archive.put(make('s1', hostSource, { status: 'live', turnCount: 1 }));
+
+    clock.ms += 1_000;
+    db.archive.put(make('s1', hostSource, { status: 'done', turnCount: 4 }));
+
+    expect(db.archive.loadSummaries()[0]!.turnCount).toBe(4);
+  });
+
+  it('never defers the very first write of a session', () => {
+    const clock = { ms: 1_000 };
+    const db = liveDb(clock);
+    db.archive.put(make('s1', hostSource, { status: 'live', turnCount: 1 }));
+    expect(db.archive.loadSummaries()).toHaveLength(1);
+  });
+
+  it('flushAll writes every deferred body', () => {
+    const clock = { ms: 1_000 };
+    const db = liveDb(clock);
+    db.archive.put(make('s1', hostSource, { status: 'live', turnCount: 1 }));
+    clock.ms += 1_000;
+    db.archive.put(make('s1', hostSource, { status: 'live', turnCount: 5 }));
+
+    db.archive.flushAll();
+    expect(db.archive.loadSummaries()[0]!.turnCount).toBe(5);
+  });
+
+  it('flushAll is a no-op when nothing is pending', () => {
+    const db = liveDb({ ms: 1_000 });
+    db.archive.put(make('s1'));
+    expect(() => db.archive.flushAll()).not.toThrow();
+    expect(db.archive.loadSummaries()).toHaveLength(1);
+  });
+
+  it('a flush does not clobber the raw line count written while deferred', () => {
+    const clock = { ms: 1_000 };
+    const db = liveDb(clock);
+    db.archive.put(make('s1', hostSource, { status: 'live' }), { lines: [line(1)] });
+    clock.ms += 1_000;
+    db.archive.put(make('s1', hostSource, { status: 'live' }),
+      { lines: [line(1), line(2), line(3)] });
+
+    db.archive.flushAll();
+    expect(db.archive.getRawLines('s1', 0, 10).total).toBe(3);
+    expect(db.archive.fileFingerprint('s1')!.lineCount).toBe(3);
+  });
+});

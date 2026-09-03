@@ -7,6 +7,15 @@ import type {
 import type { SourceKind, SourceLocation } from './sources.js';
 import type { StoreOrigin } from './store-origin.js';
 
+export interface ArchiveStoreOptions {
+  /** Minimum ms between body rewrites for a live session. Default 15000. */
+  flushMs?: number | undefined;
+  /** Injectable clock, for tests. Defaults to Date.now. */
+  now?: (() => number) | undefined;
+}
+
+const DEFAULT_FLUSH_MS = 15_000;
+
 export interface ArchivePutOptions {
   /** Verbatim JSONL lines, when the session came from a file. */
   lines?: string[] | undefined;
@@ -142,7 +151,40 @@ export class ArchiveStore {
     rawLineCount: number;
   }>;
 
-  constructor(private readonly db: Database.Database) {
+  private readonly touchRaw: Database.Statement<{
+    sessionId: string;
+    lastActivityAt: string;
+    fileSize: number | null;
+    fileMtimeMs: number | null;
+    headHash: string | null;
+    rawLineCount: number;
+  }>;
+
+  private readonly updateBody: Database.Statement<{
+    sessionId: string;
+    status: string;
+    title: string;
+    model: string;
+    turnCount: number;
+    costUsd: number;
+    durationMs: number;
+    lastActivityAt: string;
+    summaryJson: string;
+    bodyJson: string;
+    parserVersion: number;
+  }>;
+
+  private readonly flushMs: number;
+  private readonly now: () => number;
+  private readonly lastBodyWrite = new Map<string, number>();
+  private readonly pending = new Map<string, { session: Session; parserVersion: number }>();
+
+  constructor(
+    private readonly db: Database.Database,
+    options?: ArchiveStoreOptions,
+  ) {
+    this.flushMs = options?.flushMs ?? DEFAULT_FLUSH_MS;
+    this.now = options?.now ?? (() => Date.now());
     this.upsertRow = this.db.prepare(`
       INSERT INTO archive_sessions (
         session_id, source_id, source_name, source_kind, source_location,
@@ -187,6 +229,33 @@ export class ArchiveStore {
         head_hash = excluded.head_hash,
         raw_line_count = excluded.raw_line_count,
         last_ingested_at = datetime('now')
+    `);
+
+    this.touchRaw = db.prepare(`
+      UPDATE archive_sessions SET
+        last_activity_at = @lastActivityAt,
+        file_size = @fileSize,
+        file_mtime_ms = @fileMtimeMs,
+        head_hash = @headHash,
+        raw_line_count = @rawLineCount,
+        last_ingested_at = datetime('now')
+      WHERE session_id = @sessionId
+    `);
+
+    this.updateBody = db.prepare(`
+      UPDATE archive_sessions SET
+        status = @status,
+        title = @title,
+        model = @model,
+        turn_count = @turnCount,
+        cost_usd = @costUsd,
+        duration_ms = @durationMs,
+        last_activity_at = @lastActivityAt,
+        summary_json = @summaryJson,
+        body_json = @bodyJson,
+        parser_version = @parserVersion,
+        last_ingested_at = datetime('now')
+      WHERE session_id = @sessionId
     `);
   }
 
@@ -315,10 +384,31 @@ export class ArchiveStore {
     const bodyJson = JSON.stringify(toBody(session));
     const lines = opts?.lines;
 
+    const now = this.now();
+    const existed = this.hasSession(meta.id);
+    const withinWindow
+      = (now - (this.lastBodyWrite.get(meta.id) ?? 0)) < this.flushMs;
+    const defer = existed && meta.status === 'live' && withinWindow;
+
     const txn = this.db.transaction(() => {
       const previous = this.fileFingerprint(meta.id);
       const lineCount = lines ? lines.length : (previous?.lineCount ?? 0);
       const headHash = lines ? headHashOf(lines) : (previous?.headHash ?? null);
+      const fileSize = opts?.fileSize ?? previous?.size ?? null;
+      const fileMtimeMs = opts?.fileMtimeMs ?? previous?.mtimeMs ?? null;
+
+      if (defer) {
+        this.touchRaw.run({
+          sessionId: meta.id,
+          lastActivityAt: meta.lastActivityAt,
+          fileSize, fileMtimeMs, headHash, rawLineCount: lineCount,
+        });
+        if (lines) this.writeLines(meta.id, lines, previous);
+        this.pending.set(meta.id, {
+          session, parserVersion: opts?.parserVersion ?? 0,
+        });
+        return;
+      }
 
       this.upsertRow.run({
         sessionId: meta.id,
@@ -344,16 +434,46 @@ export class ArchiveStore {
         summaryJson,
         bodyJson,
         parserVersion: opts?.parserVersion ?? 0,
-        fileSize: opts?.fileSize ?? previous?.size ?? null,
-        fileMtimeMs: opts?.fileMtimeMs ?? previous?.mtimeMs ?? null,
+        fileSize,
+        fileMtimeMs,
         headHash,
         rawLineCount: lineCount,
       });
 
       if (lines) this.writeLines(meta.id, lines, previous);
+      this.lastBodyWrite.set(meta.id, now);
+      this.pending.delete(meta.id);
     });
 
     txn();
+  }
+
+  /** Write a deferred body through. Leaves raw-line bookkeeping alone. */
+  flush(sessionId: string): void {
+    const entry = this.pending.get(sessionId);
+    if (!entry) return;
+    const meta = toMeta(entry.session);
+    this.updateBody.run({
+      sessionId: meta.id,
+      status: meta.status,
+      title: meta.title,
+      model: meta.model,
+      turnCount: meta.turnCount,
+      costUsd: meta.costUsd,
+      durationMs: meta.durationMs,
+      lastActivityAt: meta.lastActivityAt,
+      summaryJson: JSON.stringify({
+        costBreakdown: meta.costBreakdown, subagents: meta.subagents,
+      } satisfies SummaryJson),
+      bodyJson: JSON.stringify(toBody(entry.session)),
+      parserVersion: entry.parserVersion,
+    });
+    this.pending.delete(sessionId);
+    this.lastBodyWrite.set(sessionId, this.now());
+  }
+
+  flushAll(): void {
+    for (const id of [...this.pending.keys()]) this.flush(id);
   }
 
   deleteSession(sessionId: string): void {
