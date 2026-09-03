@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import { OpenCodeWatcher } from '../src/opencode-watcher.js';
+import { TrackerDB } from '../src/db.js';
 import type { Session } from '../src/types.js';
 import type { Source } from '../src/sources.js';
 
@@ -14,6 +15,69 @@ function makeTmp(): string {
 
 function src(id: string, path: string): Source {
   return { id, name: id, path, kind: 'opencode', layout: 'single', location: 'host' };
+}
+
+// Mirrors the real opencode schema (verified against a live install) -
+// parts live in their own table, one row per part, keyed by message_id.
+function createDb(dataDir: string): Database.Database {
+  const dbPath = join(dataDir, 'opencode.db');
+  const db = new Database(dbPath);
+  db.exec(`
+    CREATE TABLE project (
+      id TEXT PRIMARY KEY, display_name TEXT, root_directory TEXT, created_at TEXT
+    );
+    CREATE TABLE session (
+      id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, model TEXT, cost REAL,
+      parent_id TEXT, time_updated INTEGER NOT NULL, title TEXT
+    );
+    CREATE TABLE message (
+      id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER NOT NULL, data TEXT
+    );
+    CREATE TABLE part (
+      id TEXT PRIMARY KEY, message_id TEXT, time_created INTEGER NOT NULL, data TEXT
+    );
+  `);
+  return db;
+}
+
+function insertSession(
+  db: Database.Database,
+  session: {
+    id: string;
+    projectId: string;
+    directory: string;
+    title: string;
+    timeUpdated: number;
+    parentId?: string | null;
+  },
+): void {
+  db.prepare(`
+    INSERT OR REPLACE INTO session (id, project_id, directory, model, cost, parent_id, time_updated, title)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+  `).run(
+    session.id,
+    session.projectId,
+    session.directory,
+    JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
+    0.001,
+    session.parentId ?? null,
+    session.timeUpdated,
+    session.title,
+  );
+
+  const msgId = `${session.id}-msg-1`;
+  db.prepare(`INSERT OR REPLACE INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)`).run(
+    msgId,
+    session.id,
+    session.timeUpdated,
+    JSON.stringify({ role: 'user' }),
+  );
+  db.prepare(`INSERT OR REPLACE INTO part (id, message_id, time_created, data) VALUES (?, ?, ?, ?)`).run(
+    `${msgId}-part-1`,
+    msgId,
+    session.timeUpdated,
+    JSON.stringify({ type: 'text', text: 'hello' }),
+  );
 }
 
 describe('OpenCodeWatcher', () => {
@@ -33,69 +97,6 @@ describe('OpenCodeWatcher', () => {
       await rm(d, { recursive: true, force: true });
     }
   });
-
-  // Mirrors the real opencode schema (verified against a live install) -
-  // parts live in their own table, one row per part, keyed by message_id.
-  function createDb(dataDir: string): Database.Database {
-    const dbPath = join(dataDir, 'opencode.db');
-    const db = new Database(dbPath);
-    db.exec(`
-      CREATE TABLE project (
-        id TEXT PRIMARY KEY, display_name TEXT, root_directory TEXT, created_at TEXT
-      );
-      CREATE TABLE session (
-        id TEXT PRIMARY KEY, project_id TEXT, directory TEXT, model TEXT, cost REAL,
-        parent_id TEXT, time_updated INTEGER NOT NULL, title TEXT
-      );
-      CREATE TABLE message (
-        id TEXT PRIMARY KEY, session_id TEXT, time_created INTEGER NOT NULL, data TEXT
-      );
-      CREATE TABLE part (
-        id TEXT PRIMARY KEY, message_id TEXT, time_created INTEGER NOT NULL, data TEXT
-      );
-    `);
-    return db;
-  }
-
-  function insertSession(
-    db: Database.Database,
-    session: {
-      id: string;
-      projectId: string;
-      directory: string;
-      title: string;
-      timeUpdated: number;
-      parentId?: string | null;
-    },
-  ): void {
-    db.prepare(`
-      INSERT OR REPLACE INTO session (id, project_id, directory, model, cost, parent_id, time_updated, title)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      session.id,
-      session.projectId,
-      session.directory,
-      JSON.stringify({ providerID: 'anthropic', id: 'claude-sonnet-4-6' }),
-      0.001,
-      session.parentId ?? null,
-      session.timeUpdated,
-      session.title,
-    );
-
-    const msgId = `${session.id}-msg-1`;
-    db.prepare(`INSERT OR REPLACE INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)`).run(
-      msgId,
-      session.id,
-      session.timeUpdated,
-      JSON.stringify({ role: 'user' }),
-    );
-    db.prepare(`INSERT OR REPLACE INTO part (id, message_id, time_created, data) VALUES (?, ?, ?, ?)`).run(
-      `${msgId}-part-1`,
-      msgId,
-      session.timeUpdated,
-      JSON.stringify({ type: 'text', text: 'hello' }),
-    );
-  }
 
   it('populates getAllSessions() from an initial scan without emitting events', async () => {
     const dataDir = makeTmp();
@@ -297,5 +298,38 @@ describe('OpenCodeWatcher', () => {
     const watcher = new OpenCodeWatcher(src('test-source', dataDir));
     await watcher.start();
     await expect(watcher.stop()).resolves.toBeUndefined();
+  });
+});
+
+describe('OpenCodeWatcher archive write-through', () => {
+  const ocCleanup: string[] = [];
+  afterEach(async () => {
+    for (const d of ocCleanup.splice(0)) await rm(d, { recursive: true, force: true });
+  });
+
+  it('archives scanned sessions with a body and no raw lines', async () => {
+    const dataDir = makeTmp();
+    ocCleanup.push(dataDir);
+    const ocDb = createDb(dataDir);
+    insertSession(ocDb, {
+      id: 'oc-1', projectId: 'p1', directory: '/workspace',
+      timeUpdated: 1_756_000_000_000, title: 'OpenCode session',
+    });
+    ocDb.close();
+
+    const db = new TrackerDB(':memory:');
+    const watcher = new OpenCodeWatcher(
+      { id: 'oc', name: 'OpenCode', path: dataDir,
+        kind: 'opencode', layout: 'single', location: 'host' },
+      db,
+    );
+    await watcher.start();
+
+    const summaries = db.archive.loadSummaries();
+    expect(summaries.length).toBeGreaterThan(0);
+    expect(summaries[0]!.sourceKind).toBe('opencode');
+    expect(db.archive.getBody(summaries[0]!.id)).not.toBeNull();
+    expect(db.archive.stats().rawLineCount).toBe(0);
+    await watcher.stop();
   });
 });

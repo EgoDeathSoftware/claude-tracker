@@ -2,7 +2,7 @@ import { watch } from 'chokidar';
 import { readdir } from 'node:fs/promises';
 import { join, basename, dirname, relative, sep } from 'node:path';
 import { EventEmitter } from 'node:events';
-import { parseSession } from './parser.js';
+import { parseSessionDetailed, PARSER_VERSION } from './parser.js';
 import { decorateSession } from './session-shape.js';
 import type { TrackerDB } from './db.js';
 import type { Source } from './sources.js';
@@ -97,13 +97,17 @@ export class SourceWatcher extends EventEmitter {
     dirName: string,
   ): Promise<void> {
     try {
-      const parsed = await parseSession(
-        filePath,
-        this.sourceId,
-        dirName,
+      const parsed = await parseSessionDetailed(filePath, this.sourceId, dirName);
+      const session = decorateSession(
+        this.transformSession(parsed.session), this.source,
       );
-      const session = decorateSession(this.transformSession(parsed), this.source);
       this.sessions.set(session.id, session);
+      this.db?.archive.put(session, {
+        lines: parsed.lines,
+        fileSize: parsed.size,
+        fileMtimeMs: parsed.mtimeMs,
+        parserVersion: PARSER_VERSION,
+      });
       if (this.db && !session.isSubagent) {
         this.db.indexSession(session);
       }
@@ -197,6 +201,7 @@ export class SourceWatcher extends EventEmitter {
       await this.watcher.close();
       this.watcher = null;
     }
+    this.db?.archive.flushAll();
   }
 
   private async handleFileEvent(
@@ -204,20 +209,25 @@ export class SourceWatcher extends EventEmitter {
     eventName: 'session-created' | 'session-updated',
   ): Promise<void> {
     const dirName = this.dirNameFromPath(filePath);
-    const parsed = await parseSession(
-      filePath,
-      this.sourceId,
-      dirName,
-    ).catch(err => {
-      console.error(
-        `[source-watcher:${this.sourceId}] Failed to parse ${filePath}:`,
-        err instanceof Error ? err.message : err,
-      );
-      return null;
-    });
+    const parsed = await parseSessionDetailed(filePath, this.sourceId, dirName)
+      .catch(err => {
+        console.error(
+          `[source-watcher:${this.sourceId}] Failed to parse ${filePath}:`,
+          err instanceof Error ? err.message : err,
+        );
+        return null;
+      });
     if (!parsed) return;
-    const session = decorateSession(this.transformSession(parsed), this.source);
+    const session = decorateSession(
+      this.transformSession(parsed.session), this.source,
+    );
     this.sessions.set(session.id, session);
+    this.db?.archive.put(session, {
+      lines: parsed.lines,
+      fileSize: parsed.size,
+      fileMtimeMs: parsed.mtimeMs,
+      parserVersion: PARSER_VERSION,
+    });
 
     if (session.isSubagent) {
       this.linkSubagents();

@@ -44,6 +44,7 @@ export class OpenCodeWatcher extends EventEmitter {
       clearInterval(this.pollTimer);
       this.pollTimer = null;
     }
+    this.db?.archive.flushAll();
   }
 
   // Always does a full rescan + diff + emit, regardless of mtime - exposed
@@ -71,6 +72,10 @@ export class OpenCodeWatcher extends EventEmitter {
     for (const session of scanned) {
       const existing = this.sessions.get(session.id);
       this.sessions.set(session.id, session);
+
+      // No raw lines exist for opencode: its sessions come from opencode's
+      // own SQLite tables, not a JSONL file.
+      this.db?.archive.put(session);
 
       if (this.db && !session.isSubagent) {
         this.db.indexSession(session);
