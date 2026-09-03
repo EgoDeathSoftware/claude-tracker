@@ -6,6 +6,10 @@ function makeSession(id: string, overrides: Partial<Session> = {}): Session {
   return {
     id,
     sourceId: 'wsl',
+    sourceName: 'WSL',
+    sourceKind: 'claude-code',
+    sourceLocation: 'host',
+    archived: false,
     projectId: 'workspace',
     filePath: `/claude/projects/-workspace/${id}.jsonl`,
     slug: id,

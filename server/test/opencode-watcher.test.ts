@@ -6,9 +6,14 @@ import { tmpdir } from 'node:os';
 import Database from 'better-sqlite3';
 import { OpenCodeWatcher } from '../src/opencode-watcher.js';
 import type { Session } from '../src/types.js';
+import type { Source } from '../src/sources.js';
 
 function makeTmp(): string {
   return mkdtempSync(join(tmpdir(), 'opencode-watcher-test-'));
+}
+
+function src(id: string, path: string): Source {
+  return { id, name: id, path, kind: 'opencode', layout: 'single', location: 'host' };
 }
 
 describe('OpenCodeWatcher', () => {
@@ -106,7 +111,7 @@ describe('OpenCodeWatcher', () => {
     });
     db.close();
 
-    const watcher = new OpenCodeWatcher('test-source', dataDir);
+    const watcher = new OpenCodeWatcher(src('test-source', dataDir));
     watchers.push(watcher);
 
     const created: Session[] = [];
@@ -133,7 +138,7 @@ describe('OpenCodeWatcher', () => {
       timeUpdated: Date.now() - 60_000,
     });
 
-    const watcher = new OpenCodeWatcher('test-source', dataDir);
+    const watcher = new OpenCodeWatcher(src('test-source', dataDir));
     watchers.push(watcher);
     await watcher.start();
 
@@ -169,7 +174,7 @@ describe('OpenCodeWatcher', () => {
       timeUpdated: Date.now() - 60_000,
     });
 
-    const watcher = new OpenCodeWatcher('test-source', dataDir);
+    const watcher = new OpenCodeWatcher(src('test-source', dataDir));
     watchers.push(watcher);
     await watcher.start();
 
@@ -210,7 +215,7 @@ describe('OpenCodeWatcher', () => {
     });
     db.close();
 
-    const watcher = new OpenCodeWatcher('test-source', dataDir);
+    const watcher = new OpenCodeWatcher(src('test-source', dataDir));
     watchers.push(watcher);
     await watcher.start();
 
@@ -239,7 +244,7 @@ describe('OpenCodeWatcher', () => {
       timeUpdated: Date.now() - 60_000,
     });
 
-    const watcher = new OpenCodeWatcher('test-source', dataDir);
+    const watcher = new OpenCodeWatcher(src('test-source', dataDir));
     watchers.push(watcher);
     await watcher.start();
 
@@ -268,7 +273,7 @@ describe('OpenCodeWatcher', () => {
     const dataDir = makeTmp();
     cleanup.push(dataDir);
 
-    const watcher = new OpenCodeWatcher('test-source', dataDir);
+    const watcher = new OpenCodeWatcher(src('test-source', dataDir));
     watchers.push(watcher);
     await watcher.start();
 
@@ -289,7 +294,7 @@ describe('OpenCodeWatcher', () => {
     });
     db.close();
 
-    const watcher = new OpenCodeWatcher('test-source', dataDir);
+    const watcher = new OpenCodeWatcher(src('test-source', dataDir));
     await watcher.start();
     await expect(watcher.stop()).resolves.toBeUndefined();
   });

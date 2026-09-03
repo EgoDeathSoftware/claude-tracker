@@ -2,7 +2,9 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { listOpenCodeSessions } from './opencode-parser.js';
+import { decorateSession } from './session-shape.js';
 import type { TrackerDB } from './db.js';
+import type { Source } from './sources.js';
 import type { Session } from './types.js';
 
 const POLL_INTERVAL_MS = 1000;
@@ -15,14 +17,15 @@ export class OpenCodeWatcher extends EventEmitter {
   private pollTimer: ReturnType<typeof setInterval> | null = null;
   private lastDbMtimeMs = 0;
   private lastWalMtimeMs = 0;
+  public readonly sourceId: string;
 
   constructor(
-    public readonly sourceId: string,
-    private readonly dataDir: string,
+    private readonly source: Source,
     db?: TrackerDB,
   ) {
     super();
-    this.dbPath = join(dataDir, 'opencode.db');
+    this.sourceId = source.id;
+    this.dbPath = join(source.path, 'opencode.db');
     this.walPath = `${this.dbPath}-wal`;
     this.db = db ?? null;
   }
@@ -53,7 +56,8 @@ export class OpenCodeWatcher extends EventEmitter {
 
   private async scan(): Promise<Session[] | null> {
     try {
-      return await listOpenCodeSessions(this.dbPath, this.sourceId);
+      const parsed = await listOpenCodeSessions(this.dbPath, this.sourceId);
+      return parsed.map(p => decorateSession(p, this.source));
     } catch (err) {
       console.error(
         `[opencode-watcher:${this.sourceId}] Failed to scan ${this.dbPath}:`,

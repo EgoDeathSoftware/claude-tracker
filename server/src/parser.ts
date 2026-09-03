@@ -5,7 +5,7 @@ import { basename, dirname } from 'node:path';
 import { computeCost } from './pricing.js';
 import { deriveProjectKey } from './project-key.js';
 import type {
-  Session, SessionMessage, SessionStatus, ContentBlock,
+  ParsedSession, SessionMessage, SessionStatus, ContentBlock,
   MessageUsage, RawLogEntry, ToolCallEntry, FileChangeEntry,
   CostBreakdown, FileOperation, HookEvent, PermissionEvent, RecapEntry,
 } from './types.ts';
@@ -241,7 +241,7 @@ export async function parseSession(
   filePath: string,
   sourceId: string,
   dirName: string,
-): Promise<Session> {
+): Promise<ParsedSession> {
   const [lines, fileStat] = await Promise.all([readLines(filePath), stat(filePath)]);
 
   const messages: SessionMessage[] = [];

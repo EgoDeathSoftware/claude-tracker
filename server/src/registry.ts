@@ -6,7 +6,7 @@ import { StoreSetWatcher } from './store-set-watcher.js';
 import type { StoreSetWatcherOptions } from './store-set-watcher.js';
 import { applyOrigin } from './store-origin.js';
 import type { TrackerDB } from './db.js';
-import type { Session, Project } from './types.js';
+import type { ParsedSession, Session, Project } from './types.js';
 import type { Source, SourceKind, SourceLocation } from './sources.js';
 import { displayNameFromCwd } from './project-key.js';
 
@@ -28,9 +28,9 @@ function createWatcher(
 ): AgentWatcher {
   switch (source.kind) {
     case 'claude-code':
-      return new SourceWatcher(source.id, source.path, db, options);
+      return new SourceWatcher(source, db, options);
     case 'opencode':
-      return new OpenCodeWatcher(source.id, source.path, db);
+      return new OpenCodeWatcher(source, db);
   }
 }
 
@@ -68,7 +68,9 @@ export class SessionRegistry extends EventEmitter {
     const origin = source.origin;
     return {
       watch,
-      transformSession: origin ? (s: Session) => applyOrigin(s, origin) : undefined,
+      transformSession: origin
+        ? (s: ParsedSession) => applyOrigin(s, origin)
+        : undefined,
     };
   }
 

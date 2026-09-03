@@ -3,14 +3,16 @@ import { readdir } from 'node:fs/promises';
 import { join, basename, dirname, relative, sep } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { parseSession } from './parser.js';
+import { decorateSession } from './session-shape.js';
 import type { TrackerDB } from './db.js';
-import type { Session } from './types.js';
+import type { Source } from './sources.js';
+import type { ParsedSession, Session } from './types.js';
 
 export interface SourceWatcherOptions {
   /** Start a filesystem watcher for live updates. Defaults to true. */
   watch?: boolean | undefined;
-  /** Applied to every parsed session before it is stored or emitted. */
-  transformSession?: ((session: Session) => Session) | undefined;
+  /** Applied to every parsed session before it is decorated or stored. */
+  transformSession?: ((session: ParsedSession) => ParsedSession) | undefined;
 }
 
 export class SourceWatcher extends EventEmitter {
@@ -19,16 +21,17 @@ export class SourceWatcher extends EventEmitter {
   private watcher: ReturnType<typeof watch> | null = null;
   private db: TrackerDB | null;
   private readonly watchEnabled: boolean;
-  private readonly transformSession: (session: Session) => Session;
+  private readonly transformSession: (session: ParsedSession) => ParsedSession;
+  public readonly sourceId: string;
 
   constructor(
-    public readonly sourceId: string,
-    private readonly claudeDir: string,
+    private readonly source: Source,
     db?: TrackerDB,
     options?: SourceWatcherOptions,
   ) {
     super();
-    this.projectsDir = join(claudeDir, 'projects');
+    this.sourceId = source.id;
+    this.projectsDir = join(source.path, 'projects');
     this.db = db ?? null;
     this.watchEnabled = options?.watch ?? true;
     this.transformSession = options?.transformSession ?? (s => s);
@@ -99,7 +102,7 @@ export class SourceWatcher extends EventEmitter {
         this.sourceId,
         dirName,
       );
-      const session = this.transformSession(parsed);
+      const session = decorateSession(this.transformSession(parsed), this.source);
       this.sessions.set(session.id, session);
       if (this.db && !session.isSubagent) {
         this.db.indexSession(session);
@@ -213,7 +216,7 @@ export class SourceWatcher extends EventEmitter {
       return null;
     });
     if (!parsed) return;
-    const session = this.transformSession(parsed);
+    const session = decorateSession(this.transformSession(parsed), this.source);
     this.sessions.set(session.id, session);
 
     if (session.isSubagent) {

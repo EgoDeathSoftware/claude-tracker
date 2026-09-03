@@ -3,6 +3,11 @@ import { join } from 'node:path';
 import { writeFile, mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { SourceWatcher } from '../src/source-watcher.ts';
+import type { Source } from '../src/sources.ts';
+
+function src(id: string, path: string): Source {
+  return { id, name: id, path, kind: 'claude-code', layout: 'single', location: 'host' };
+}
 
 function makeUserLine(uuid: string, content: string, ts: string): string {
   return JSON.stringify({
@@ -63,7 +68,7 @@ describe('SourceWatcher subagent support', () => {
     ].join('\n');
     await writeFile(join(subagentDir, 'agent-abc.jsonl'), subContent);
 
-    const watcher = new SourceWatcher('test-source', claudeDir);
+    const watcher = new SourceWatcher(src('test-source', claudeDir));
     await watcher.start();
 
     try {
@@ -115,7 +120,7 @@ describe('SourceWatcher subagent support', () => {
     await mkdir(subDir, { recursive: true });
     await writeFile(join(subDir, 'agent-x.jsonl'), content);
 
-    const watcher = new SourceWatcher('test-source', claudeDir);
+    const watcher = new SourceWatcher(src('test-source', claudeDir));
     await watcher.start();
 
     try {
@@ -147,7 +152,7 @@ describe('SourceWatcher options', () => {
       }),
     ].join('\n'), 'utf-8');
 
-    const watcher = new SourceWatcher('agents:demo', dir, undefined, {
+    const watcher = new SourceWatcher(src('agents:demo', dir), undefined, {
       watch: false,
       transformSession: s => ({ ...s, cwd: '/host/demo', projectId: 'demo' }),
     });
@@ -163,7 +168,7 @@ describe('SourceWatcher options', () => {
   it('starts no filesystem watcher when watch is false', async () => {
     const dir = await mkdtemp(join(tmpdir(), 'sw-nowatch-'));
     await mkdir(join(dir, 'projects'), { recursive: true });
-    const watcher = new SourceWatcher('agents:quiet', dir, undefined, { watch: false });
+    const watcher = new SourceWatcher(src('agents:quiet', dir), undefined, { watch: false });
     await watcher.start();
 
     const events: string[] = [];
@@ -197,7 +202,7 @@ describe('SourceWatcher options', () => {
   it('watches by default when no options are given', { timeout: 10_000, retry: 4 }, async () => {
     const dir = await mkdtemp(join(tmpdir(), 'sw-default-'));
     await mkdir(join(dir, 'projects', '-workspace'), { recursive: true });
-    const watcher = new SourceWatcher('agents:loud', dir);
+    const watcher = new SourceWatcher(src('agents:loud', dir));
     await watcher.start();
 
     const seen = new Promise<void>(resolve => {

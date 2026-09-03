@@ -6,6 +6,7 @@ import {
   rewriteCwd, synthesizeOrigin, readStoreOrigin, applyOrigin,
 } from '../src/store-origin.ts';
 import type { StoreOrigin } from '../src/store-origin.ts';
+import type { ParsedSession } from '../src/types.ts';
 
 const origin: StoreOrigin = {
   container: 'vercel.ai',
@@ -130,7 +131,7 @@ describe('readStoreOrigin', () => {
 });
 
 describe('applyOrigin', () => {
-  const baseSession = {
+  const baseSession: ParsedSession = {
     id: 's1',
     sourceId: 'agents:vercel.ai',
     projectId: 'workspace',

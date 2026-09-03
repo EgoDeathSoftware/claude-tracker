@@ -1,7 +1,7 @@
 import Database from 'better-sqlite3';
 import { deriveProjectKey } from './project-key.js';
 import type {
-  Session, SessionMessage, ToolCallEntry, FileChangeEntry,
+  ParsedSession, SessionMessage, ToolCallEntry, FileChangeEntry,
   ContentBlock, CostBreakdown, RawLogEntry,
 } from './types.js';
 
@@ -90,7 +90,7 @@ function columnExists(db: Database.Database, tableName: string, columnName: stri
 export async function listOpenCodeSessions(
   dbPath: string,
   sourceId: string,
-): Promise<Session[]> {
+): Promise<ParsedSession[]> {
   const db = new Database(dbPath, { readonly: true, fileMustExist: true });
 
   try {
@@ -107,7 +107,7 @@ export async function listOpenCodeSessions(
       rows = stmt.all();
     }
 
-    const sessions: Session[] = [];
+    const sessions: ParsedSession[] = [];
     for (const row of rows) {
       try {
         const session = row as {

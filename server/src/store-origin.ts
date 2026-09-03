@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { Session } from './types.js';
+import type { ParsedSession } from './types.js';
 import { deriveProjectKey } from './project-key.js';
 
 /**
@@ -99,7 +99,7 @@ export async function readStoreOrigin(
  * host path and its project key recomputed, so container sessions merge with
  * host sessions for the same folder.
  */
-export function applyOrigin(session: Session, origin: StoreOrigin): Session {
+export function applyOrigin(session: ParsedSession, origin: StoreOrigin): ParsedSession {
   const cwd = rewriteCwd(session.cwd, origin);
   return {
     ...session,
