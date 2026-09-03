@@ -57,7 +57,7 @@ The archive is a write-through store beneath the registry.
 ```
 watchers ──parse──> registry.ingest() ──> ArchiveStore.put()
                           │
-                          └──> in-memory SessionSummary map (list views)
+                          └──> in-memory SessionMeta map (list views)
 
 routes ──detail read──> ArchiveStore.getBody()
 ```
@@ -82,7 +82,7 @@ subtlety that ruled out a fallback-tier design.
 
 ```ts
 // server/src/types.ts, mirrored to client/src/types.ts
-export interface SessionSummary {
+export interface SessionMeta {
   id: string;
   sourceId: string;
   sourceName: string;
@@ -119,7 +119,7 @@ export interface SessionBody {
   recaps: RecapEntry[];
 }
 
-export type Session = SessionSummary & SessionBody;
+export type Session = SessionMeta & SessionBody;
 ```
 
 `sourceName`/`sourceKind`/`sourceLocation`/`origin` are on the summary, not
@@ -224,7 +224,7 @@ future deletion path wrap archive and FTS writes in a single transaction.
 
 ```ts
 export class ArchiveStore {
-  loadSummaries(): SessionSummary[];
+  loadSummaries(): SessionMeta[];
   getBody(sessionId: string): SessionBody | null;
   getRawLines(
     sessionId: string, offset: number, limit: number,
@@ -265,7 +265,7 @@ renders until every transcript has been parsed.
 already filter them out with `isSubagent`, but the Agents tab and
 `linkSubagents` need them present.
 
-The registry's map narrows to `Map<string, SessionSummary>`. Watchers still
+The registry's map narrows to `Map<string, SessionMeta>`. Watchers still
 produce a full `Session` — the parser builds everything in one pass regardless —
 and `ingest()` archives it, then keeps only the summary portion with
 `archived: false`. This is where the memory bound actually comes from.
@@ -331,7 +331,7 @@ messages.
 
 | Endpoint | Change |
 |---|---|
-| `GET /api/sessions` | returns `SessionSummary[]`; payload shrinks substantially |
+| `GET /api/sessions` | returns `SessionMeta[]`; payload shrinks substantially |
 | `GET /api/sessions/:id` | now async; merges the summary with the body from the archive |
 | `GET /api/sessions/:id/raw` | archive-backed when archived; opencode branch collapses into it |
 | `DELETE /api/archive/sessions/:id` | new; the only path that destroys data, and also calls `db.removeSession()` |
@@ -343,7 +343,7 @@ default. `SessionFilter` can gain one later without disturbing anything.
 
 ## Client
 
-- `client/src/types.ts` mirrors the `SessionSummary`/`SessionBody`/`Session`
+- `client/src/types.ts` mirrors the `SessionMeta`/`SessionBody`/`Session`
   split.
 - `SessionList` renders an "archived" badge beside the existing source badge and
   reads the source label from the session snapshot.
