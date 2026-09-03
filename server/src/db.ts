@@ -2,8 +2,9 @@ import Database from 'better-sqlite3';
 import { mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';
 import type { Session, AiSummary } from './types.ts';
+import { ArchiveStore } from './archive-store.js';
 
-const SCHEMA_VERSION = 2;
+const SCHEMA_VERSION = 3;
 
 export interface SearchResult {
   sessionId: string;
@@ -28,6 +29,8 @@ export interface Prompt {
 
 export class TrackerDB {
   private db: Database.Database;
+  /** Durable transcript archive. Shares this connection; see archive-store.ts. */
+  readonly archive: ArchiveStore;
 
   constructor(dbPath: string) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -38,6 +41,7 @@ export class TrackerDB {
     // Rebuild FTS if the schema version changed. Done eagerly here so any
     // subsequent indexSession() calls write into the up-to-date table.
     this.maybeRebuildFts();
+    this.archive = new ArchiveStore(this.db);
   }
 
   private migrate(): void {
@@ -81,6 +85,52 @@ export class TrackerDB {
         generated_at TEXT NOT NULL DEFAULT (datetime('now')),
         source_last_activity_at TEXT NOT NULL
       );
+
+      CREATE TABLE IF NOT EXISTS archive_sessions (
+        session_id        TEXT PRIMARY KEY,
+        source_id         TEXT NOT NULL,
+        source_name       TEXT NOT NULL,
+        source_kind       TEXT NOT NULL,
+        source_location   TEXT NOT NULL,
+        origin_json       TEXT,
+        project_id        TEXT NOT NULL,
+        cwd               TEXT NOT NULL,
+        file_path         TEXT NOT NULL,
+        slug              TEXT NOT NULL,
+        title             TEXT NOT NULL,
+        model             TEXT NOT NULL,
+        status            TEXT NOT NULL,
+        is_subagent       INTEGER NOT NULL,
+        parent_session_id TEXT,
+        turn_count        INTEGER NOT NULL,
+        cost_usd          REAL NOT NULL,
+        started_at        TEXT NOT NULL,
+        last_activity_at  TEXT NOT NULL,
+        duration_ms       INTEGER NOT NULL,
+        summary_json      TEXT NOT NULL,
+        body_json         TEXT NOT NULL,
+        body_codec        TEXT NOT NULL DEFAULT 'json',
+        parser_version    INTEGER NOT NULL,
+        file_size         INTEGER,
+        file_mtime_ms     INTEGER,
+        head_hash         TEXT,
+        raw_line_count    INTEGER NOT NULL DEFAULT 0,
+        first_seen_at     TEXT NOT NULL,
+        last_ingested_at  TEXT NOT NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_archive_project
+        ON archive_sessions(project_id, last_activity_at DESC);
+      CREATE INDEX IF NOT EXISTS idx_archive_parent
+        ON archive_sessions(parent_session_id);
+
+      CREATE TABLE IF NOT EXISTS archive_raw_lines (
+        session_id  TEXT NOT NULL
+          REFERENCES archive_sessions(session_id) ON DELETE CASCADE,
+        line_number INTEGER NOT NULL,
+        content     TEXT NOT NULL,
+        PRIMARY KEY (session_id, line_number)
+      ) WITHOUT ROWID;
     `);
   }
 
