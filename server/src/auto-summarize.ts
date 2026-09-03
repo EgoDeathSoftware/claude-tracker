@@ -34,7 +34,9 @@ export function startAutoSummarizePoller(
       if (db.hasSessionSummary(session.id)) continue;
 
       try {
-        const summary = await generateSummary(session, config);
+        const detail = await registry.getSessionDetail(session.id);
+        if (!detail) continue;
+        const summary = await generateSummary(detail, config);
         db.saveSessionSummary(session.id, summary);
         console.log(`[auto-summarize] generated summary for ${session.id}`);
       } catch (err) {

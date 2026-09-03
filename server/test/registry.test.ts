@@ -6,6 +6,7 @@ import Database from 'better-sqlite3';
 import { SessionRegistry } from '../src/registry.js';
 import { TrackerDB } from '../src/db.js';
 import type { Source } from '../src/sources.js';
+import { archivedSession } from './fixtures/session.js';
 
 // Mirrors the real opencode DB (verified against a live install) - parts
 // live in their own table, one row per part, keyed by message_id.
@@ -74,6 +75,13 @@ async function seedSession(
   await mkdir(projectDir, { recursive: true });
   const line = makeUserLine('u1', 'hello', ts, cwd);
   await writeFile(join(projectDir, `${sessionId}.jsonl`), line);
+}
+
+function src(id: string, path: string): Source {
+  return {
+    id, name: id, path,
+    kind: 'claude-code', layout: 'single', location: 'host',
+  };
 }
 
 describe('SessionRegistry', () => {
@@ -657,4 +665,103 @@ describe('store-set sources', () => {
     await laterWatched;
     await watched.stop();
   }, 10_000);
+});
+
+describe('SessionRegistry archive hydration', () => {
+  const cleanup: string[] = [];
+  afterEach(async () => {
+    for (const d of cleanup.splice(0)) {
+      await rm(d, { recursive: true, force: true });
+    }
+  });
+
+  it('serves projects and sessions loaded from the archive with no watcher', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'));
+
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+
+    expect(registry.getProjects().map(p => p.id)).toEqual(['workspace']);
+    expect(registry.getSessions().map(s => s.id)).toEqual(['gone-1']);
+    await registry.stop();
+  });
+
+  it('marks hydrated sessions archived', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'));
+
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+
+    expect(registry.getSessions()[0]!.archived).toBe(true);
+    await registry.stop();
+  });
+
+  it('a live watcher claiming a hydrated session clears archived', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reg-archive-'));
+    cleanup.push(dir);
+    await seedSession(dir, '-workspace', 'a1', '/workspace', '2026-09-01T10:00:00.000Z');
+    const db = new TrackerDB(':memory:');
+
+    const first = new SessionRegistry([src('wsl', dir)], db);
+    await first.start();
+    await first.stop();
+
+    const second = new SessionRegistry([src('wsl', dir)], db);
+    await second.start();
+    expect(second.getSessions().find(s => s.id === 'a1')!.archived).toBe(false);
+    await second.stop();
+  });
+
+  it('getSessionDetail merges the meta with the archived body', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'));
+
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+
+    const detail = await registry.getSessionDetail('gone-1');
+    expect(detail!.title).toBe('Session gone-1');
+    expect(detail!.archived).toBe(true);
+    expect(detail!.messages).toHaveLength(1);
+    await registry.stop();
+  });
+
+  it('getSessionDetail returns undefined for an unknown session', async () => {
+    const registry = new SessionRegistry([], new TrackerDB(':memory:'));
+    await registry.start();
+    expect(await registry.getSessionDetail('nope')).toBeUndefined();
+    await registry.stop();
+  });
+
+  it('getSessionDetail degrades to an empty body when the archive has none', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('orphan', 'ghost-source'));
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+
+    // The registry has the meta; the body row is gone underneath it.
+    db.archive.deleteSession('orphan');
+
+    const detail = await registry.getSessionDetail('orphan');
+    expect(detail!.messages).toEqual([]);
+    expect(detail!.toolCalls).toEqual([]);
+    await registry.stop();
+  });
+
+  it('hydration includes subagents without listing them as sessions', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('parent', 'ghost-source'));
+    db.archive.put({
+      ...archivedSession('sub', 'ghost-source'),
+      isSubagent: true, parentSessionId: 'parent',
+    });
+
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    expect(registry.getSessions().map(s => s.id)).toEqual(['parent']);
+    expect(registry.getSessionMeta('sub')).toBeDefined();
+    await registry.stop();
+  });
 });

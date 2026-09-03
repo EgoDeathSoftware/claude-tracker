@@ -103,15 +103,15 @@ export function buildApp(
     return c.json(sessions);
   });
 
-  app.get('/api/sessions/:id', c => {
-    const session = registry.getSession(c.req.param('id'));
+  app.get('/api/sessions/:id', async c => {
+    const session = await registry.getSessionDetail(c.req.param('id'));
     if (!session) return c.json({ error: 'not found' }, 404);
     const aiSummary = db.getSessionSummary(session.id) ?? undefined;
     return c.json({ ...session, aiSummary });
   });
 
   app.get('/api/sessions/:id/raw', async c => {
-    const session = registry.getSession(c.req.param('id'));
+    const session = await registry.getSessionDetail(c.req.param('id'));
     if (!session) return c.json({ error: 'not found' }, 404);
     const offset = Number(c.req.query('offset') ?? '0');
     const limit = Math.min(Number(c.req.query('limit') ?? '200'), 500);
@@ -236,7 +236,7 @@ export function buildApp(
   });
 
   app.post('/api/sessions/:id/summarize', async c => {
-    const session = registry.getSession(c.req.param('id'));
+    const session = await registry.getSessionDetail(c.req.param('id'));
     if (!session) return c.json({ error: 'not found' }, 404);
 
     const config = await readLlmConfig(llmConfigPath);
@@ -254,14 +254,14 @@ export function buildApp(
 
   // --- Session Comparison ---
 
-  app.get('/api/sessions/compare', c => {
+  app.get('/api/sessions/compare', async c => {
     const aId = c.req.query('a');
     const bId = c.req.query('b');
     if (!aId || !bId) {
       return c.json({ error: 'a and b session IDs required' }, 400);
     }
-    const a = registry.getSession(aId);
-    const b = registry.getSession(bId);
+    const a = await registry.getSessionDetail(aId);
+    const b = await registry.getSessionDetail(bId);
     if (!a || !b) return c.json({ error: 'session not found' }, 404);
 
     return c.json({

@@ -5,10 +5,16 @@ import { OpenCodeWatcher } from './opencode-watcher.js';
 import { StoreSetWatcher } from './store-set-watcher.js';
 import type { StoreSetWatcherOptions } from './store-set-watcher.js';
 import { applyOrigin } from './store-origin.js';
+import { toMeta } from './session-shape.js';
 import type { TrackerDB } from './db.js';
-import type { ParsedSession, Session, Project } from './types.js';
+import type { ParsedSession, Session, SessionBody, SessionMeta, Project } from './types.js';
 import type { Source, SourceKind, SourceLocation } from './sources.js';
 import { displayNameFromCwd } from './project-key.js';
+
+const EMPTY_BODY: SessionBody = {
+  messages: [], logEntries: [], toolCalls: [], fileChanges: [],
+  hookEvents: [], permissionEvents: [], recaps: [],
+};
 
 export interface SessionFilter {
   kinds?: SourceKind[] | undefined;
@@ -37,7 +43,7 @@ function createWatcher(
 export class SessionRegistry extends EventEmitter {
   private watchers = new Map<string, AgentWatcher>();
   private storeSets: StoreSetWatcher[] = [];
-  private sessions = new Map<string, Session>();
+  private sessions = new Map<string, SessionMeta>();
   private db: TrackerDB | null;
   private kindBySourceId: Map<string, SourceKind>;
   private locationBySourceId: Map<string, SourceLocation>;
@@ -75,6 +81,12 @@ export class SessionRegistry extends EventEmitter {
   }
 
   async start(): Promise<void> {
+    // Hydrate from the archive first: the UI is browsable before a single
+    // JSONL file is opened, and sessions whose source is gone stay listed.
+    for (const meta of this.db?.archive.loadSummaries() ?? []) {
+      this.sessions.set(meta.id, meta);
+    }
+
     // A store-set source has no .claude directory of its own — source.path is
     // the parent of many stores — so it never gets an ordinary watcher.
     // getSources() must not surface it either, hence trimming this.sources.
@@ -195,7 +207,7 @@ export class SessionRegistry extends EventEmitter {
 
   private ingest(session: Session): void {
     const existing = this.sessions.get(session.id);
-    if (existing && existing.sourceId !== session.sourceId) {
+    if (existing && !existing.archived && existing.sourceId !== session.sourceId) {
       const incomingNewer
         = new Date(session.lastActivityAt).getTime()
         >= new Date(existing.lastActivityAt).getTime();
@@ -211,7 +223,7 @@ export class SessionRegistry extends EventEmitter {
         + `(replacing ${existing.sourceId} with ${session.sourceId})`,
       );
     }
-    this.sessions.set(session.id, session);
+    this.sessions.set(session.id, toMeta(session));
   }
 
   /**
@@ -268,7 +280,7 @@ export class SessionRegistry extends EventEmitter {
     );
   }
 
-  getSessions(projectId?: string, filter?: SessionFilter): Session[] {
+  getSessions(projectId?: string, filter?: SessionFilter): SessionMeta[] {
     const all = [...this.sessions.values()].filter(
       s => !s.isSubagent && this.matches(s.sourceId, filter),
     );
@@ -282,8 +294,24 @@ export class SessionRegistry extends EventEmitter {
     );
   }
 
-  getSession(id: string): Session | undefined {
+  getSessionMeta(id: string): SessionMeta | undefined {
     return this.sessions.get(id);
+  }
+
+  /**
+   * Full session for the detail view. The body comes from the archive; a
+   * missing body row is corruption rather than a normal state, so it degrades
+   * to empty arrays with a warning instead of 404ing a session that is listed.
+   */
+  async getSessionDetail(id: string): Promise<Session | undefined> {
+    const meta = this.sessions.get(id);
+    if (!meta) return undefined;
+    const body = this.db?.archive.getBody(id) ?? null;
+    if (body === null) {
+      console.warn(`[registry] no archived body for session ${id}`);
+      return { ...meta, ...EMPTY_BODY };
+    }
+    return { ...meta, ...body };
   }
 
   getSources(): Source[] {

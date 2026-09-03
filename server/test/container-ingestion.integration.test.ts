@@ -71,7 +71,7 @@ describe('container session ingestion', () => {
     const registry = new SessionRegistry([storeSet]);
     await registry.start();
 
-    const session = registry.getSession('container-a');
+    const session = registry.getSessionMeta('container-a');
     expect(session?.cwd).toBe('/home/dave/Projects/CAT_AI/agent-shell');
     expect(session?.projectId).toBe('agent-shell');
 
@@ -94,7 +94,7 @@ describe('container session ingestion', () => {
   it('serves the raw log from the real file path', async () => {
     const registry = new SessionRegistry([storeSet]);
     await registry.start();
-    const session = registry.getSession('container-a');
+    const session = registry.getSessionMeta('container-a');
     expect(session?.filePath).toBe(
       join(STORES, 'vercel.ai', 'projects', '-workspace', 'container-a.jsonl'),
     );

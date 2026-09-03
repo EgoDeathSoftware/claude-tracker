@@ -81,10 +81,10 @@ describe('routes', () => {
   });
 
   async function buildTestApp(sources: Source[]) {
-    const registry = new SessionRegistry(sources);
+    const db = makeTestDb();
+    const registry = new SessionRegistry(sources, db);
     registries.push(registry);
     await registry.start();
-    const db = makeTestDb();
     const app = buildApp(registry, db, '/tmp/routes-test-llm-config-nonexistent.json');
     return { app, registry };
   }
