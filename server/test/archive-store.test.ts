@@ -209,3 +209,112 @@ describe('archive survives an FTS rebuild', () => {
     expect(db.archive.getBody('s1')).not.toBeNull();
   });
 });
+
+
+describe("ArchiveStore raw lines", () => {
+  const line = (n: number): string => JSON.stringify({ type: "user", n });
+
+  it("stores lines and paginates them like readRawLines", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2), line(3)] });
+
+    const page = db.archive.getRawLines("s1", 0, 2);
+    expect(page.total).toBe(3);
+    expect(page.lines).toEqual([
+      { lineNumber: 1, content: { type: "user", n: 1 } },
+      { lineNumber: 2, content: { type: "user", n: 2 } },
+    ]);
+  });
+
+  it("returns the raw string when a line is not valid JSON", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: ["{not json"] });
+    expect(db.archive.getRawLines("s1", 0, 10).lines[0]!.content).toBe("{not json");
+  });
+
+  it("clamps the page to the available lines", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2)] });
+    const page = db.archive.getRawLines("s1", 1, 500);
+    expect(page.lines).toHaveLength(1);
+    expect(page.lines[0]!.lineNumber).toBe(2);
+  });
+
+  it("returns an empty page for a session with no lines", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"));
+    expect(db.archive.getRawLines("s1", 0, 10)).toEqual({ lines: [], total: 0 });
+  });
+
+  it("appends only the new lines when the file grows", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2)] });
+    db.archive.put(make("s1"), { lines: [line(1), line(2), line(3)] });
+
+    const page = db.archive.getRawLines("s1", 0, 10);
+    expect(page.total).toBe(3);
+    expect(page.lines.map(l => l.lineNumber)).toEqual([1, 2, 3]);
+    expect(db.archive.fileFingerprint("s1")!.lineCount).toBe(3);
+  });
+
+  it("replaces every line when the head changes (file rewritten)", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2), line(3)] });
+    db.archive.put(make("s1"), { lines: [line(9)] });
+
+    const page = db.archive.getRawLines("s1", 0, 10);
+    expect(page.total).toBe(1);
+    expect(page.lines[0]!.content).toEqual({ type: "user", n: 9 });
+  });
+
+  it("replaces every line when the file is truncated to fewer lines", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2), line(3)] });
+    db.archive.put(make("s1"), { lines: [line(1)] });
+    expect(db.archive.getRawLines("s1", 0, 10).total).toBe(1);
+  });
+
+  it("leaves stored lines untouched when a put carries no lines", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2)] });
+    db.archive.put(make("s1"));
+    expect(db.archive.getRawLines("s1", 0, 10).total).toBe(2);
+  });
+
+  it("records the file fingerprint", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), {
+      lines: [line(1)], fileSize: 4096, fileMtimeMs: 1_756_000_000_000,
+    });
+    const fp = db.archive.fileFingerprint("s1")!;
+    expect(fp.size).toBe(4096);
+    expect(fp.mtimeMs).toBe(1_756_000_000_000);
+    expect(fp.lineCount).toBe(1);
+    expect(fp.headHash).toHaveLength(64);
+  });
+
+  it("returns null fingerprint for an unknown session", () => {
+    const db = new TrackerDB(":memory:");
+    expect(db.archive.fileFingerprint("nope")).toBeNull();
+  });
+
+  it("rawLineStrings returns the verbatim lines in order", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2)] });
+    expect(db.archive.rawLineStrings("s1")).toEqual([line(1), line(2)]);
+  });
+
+  it("deleteSession cascades to the raw lines", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2)] });
+    db.archive.deleteSession("s1");
+    expect(db.archive.getRawLines("s1", 0, 10).total).toBe(0);
+    expect(db.archive.stats().rawLineCount).toBe(0);
+  });
+
+  it("counts raw lines in stats", () => {
+    const db = new TrackerDB(":memory:");
+    db.archive.put(make("s1"), { lines: [line(1), line(2)] });
+    expect(db.archive.stats().rawLineCount).toBe(2);
+  });
+});

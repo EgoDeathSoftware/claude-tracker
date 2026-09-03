@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { createHash } from 'node:crypto';
 import { toMeta, toBody } from './session-shape.js';
 import type {
   CostBreakdown, Session, SessionBody, SessionMeta, SessionStatus, SubagentInfo,
@@ -12,6 +13,13 @@ export interface ArchivePutOptions {
   fileSize?: number | undefined;
   fileMtimeMs?: number | undefined;
   parserVersion?: number | undefined;
+}
+
+export interface ArchiveFingerprint {
+  size: number | null;
+  mtimeMs: number | null;
+  headHash: string | null;
+  lineCount: number;
 }
 
 export interface ArchiveStats {
@@ -56,6 +64,19 @@ const SUMMARY_COLUMNS = `
   last_activity_at, duration_ms, summary_json
 `;
 
+const HEAD_HASH_BYTES = 4096;
+
+/**
+ * Cheap identity for the head of a transcript. Two files that agree here and
+ * differ only in length are treated as the same file having grown, which is
+ * what a live Claude Code session does on every turn.
+ */
+function headHashOf(lines: string[]): string {
+  return createHash('sha256')
+    .update(lines.join('\n').slice(0, HEAD_HASH_BYTES))
+    .digest('hex');
+}
+
 function rowToMeta(row: ArchiveRow): SessionMeta {
   const summary = JSON.parse(row.summary_json) as SummaryJson;
   const meta: SessionMeta = {
@@ -91,7 +112,83 @@ function rowToMeta(row: ArchiveRow): SessionMeta {
 }
 
 export class ArchiveStore {
-  constructor(private readonly db: Database.Database) {}
+  private readonly upsertRow: Database.Statement<{
+    sessionId: string;
+    sourceId: string;
+    sourceName: string;
+    sourceKind: string;
+    sourceLocation: string;
+    originJson: string | null;
+    projectId: string;
+    cwd: string;
+    filePath: string;
+    slug: string;
+    title: string;
+    model: string;
+    status: string;
+    isSubagent: number;
+    parentSessionId: string | null;
+    turnCount: number;
+    costUsd: number;
+    startedAt: string;
+    lastActivityAt: string;
+    durationMs: number;
+    summaryJson: string;
+    bodyJson: string;
+    parserVersion: number;
+    fileSize: number | null;
+    fileMtimeMs: number | null;
+    headHash: string | null;
+    rawLineCount: number;
+  }>;
+
+  constructor(private readonly db: Database.Database) {
+    this.upsertRow = this.db.prepare(`
+      INSERT INTO archive_sessions (
+        session_id, source_id, source_name, source_kind, source_location,
+        origin_json, project_id, cwd, file_path, slug, title, model, status,
+        is_subagent, parent_session_id, turn_count, cost_usd, started_at,
+        last_activity_at, duration_ms, summary_json, body_json, body_codec,
+        parser_version, file_size, file_mtime_ms, head_hash, raw_line_count,
+        first_seen_at, last_ingested_at
+      ) VALUES (
+        @sessionId, @sourceId, @sourceName, @sourceKind, @sourceLocation,
+        @originJson, @projectId, @cwd, @filePath, @slug, @title, @model, @status,
+        @isSubagent, @parentSessionId, @turnCount, @costUsd, @startedAt,
+        @lastActivityAt, @durationMs, @summaryJson, @bodyJson, 'json',
+        @parserVersion, @fileSize, @fileMtimeMs, @headHash, @rawLineCount,
+        datetime('now'), datetime('now')
+      )
+      ON CONFLICT (session_id) DO UPDATE SET
+        source_id = excluded.source_id,
+        source_name = excluded.source_name,
+        source_kind = excluded.source_kind,
+        source_location = excluded.source_location,
+        origin_json = excluded.origin_json,
+        project_id = excluded.project_id,
+        cwd = excluded.cwd,
+        file_path = excluded.file_path,
+        slug = excluded.slug,
+        title = excluded.title,
+        model = excluded.model,
+        status = excluded.status,
+        is_subagent = excluded.is_subagent,
+        parent_session_id = excluded.parent_session_id,
+        turn_count = excluded.turn_count,
+        cost_usd = excluded.cost_usd,
+        started_at = excluded.started_at,
+        last_activity_at = excluded.last_activity_at,
+        duration_ms = excluded.duration_ms,
+        summary_json = excluded.summary_json,
+        body_json = excluded.body_json,
+        parser_version = excluded.parser_version,
+        file_size = excluded.file_size,
+        file_mtime_ms = excluded.file_mtime_ms,
+        head_hash = excluded.head_hash,
+        raw_line_count = excluded.raw_line_count,
+        last_ingested_at = datetime('now')
+    `);
+  }
 
   loadSummaries(): SessionMeta[] {
     const rows = this.db
@@ -124,6 +221,91 @@ export class ArchiveStore {
     return row?.first_seen_at ?? null;
   }
 
+  fileFingerprint(sessionId: string): ArchiveFingerprint | null {
+    const row = this.db
+      .prepare(`
+        SELECT file_size, file_mtime_ms, head_hash, raw_line_count
+        FROM archive_sessions WHERE session_id = ?
+      `)
+      .get(sessionId) as {
+        file_size: number | null;
+        file_mtime_ms: number | null;
+        head_hash: string | null;
+        raw_line_count: number;
+      } | undefined;
+    if (!row) return null;
+    return {
+      size: row.file_size,
+      mtimeMs: row.file_mtime_ms,
+      headHash: row.head_hash,
+      lineCount: row.raw_line_count,
+    };
+  }
+
+  getRawLines(
+    sessionId: string, offset: number, limit: number,
+  ): { lines: { lineNumber: number; content: unknown }[]; total: number } {
+    const total = (
+      this.db
+        .prepare('SELECT COUNT(*) AS n FROM archive_raw_lines WHERE session_id = ?')
+        .get(sessionId) as { n: number }
+    ).n;
+
+    const rows = this.db
+      .prepare(`
+        SELECT line_number, content FROM archive_raw_lines
+        WHERE session_id = ? ORDER BY line_number LIMIT ? OFFSET ?
+      `)
+      .all(sessionId, limit, offset) as { line_number: number; content: string }[];
+
+    const lines = rows.map(r => {
+      let content: unknown;
+      try {
+        content = JSON.parse(r.content);
+      } catch {
+        content = r.content;
+      }
+      return { lineNumber: r.line_number, content };
+    });
+    return { lines, total };
+  }
+
+  rawLineStrings(sessionId: string): string[] {
+    return (
+      this.db
+        .prepare(`
+          SELECT content FROM archive_raw_lines
+          WHERE session_id = ? ORDER BY line_number
+        `)
+        .all(sessionId) as { content: string }[]
+    ).map(r => r.content);
+  }
+
+  private writeLines(
+    sessionId: string, lines: string[], previous: ArchiveFingerprint | null,
+  ): void {
+    const canAppend
+      = previous !== null
+      && previous.headHash === headHashOf(lines)
+      && lines.length >= previous.lineCount;
+    const from = canAppend ? previous.lineCount : 0;
+
+    if (!canAppend) {
+      this.db
+        .prepare('DELETE FROM archive_raw_lines WHERE session_id = ?')
+        .run(sessionId);
+    }
+
+    const insert = this.db.prepare(`
+      INSERT INTO archive_raw_lines (session_id, line_number, content)
+      VALUES (?, ?, ?)
+      ON CONFLICT (session_id, line_number) DO UPDATE SET content = excluded.content
+    `);
+    for (let i = from; i < lines.length; i++) {
+      insert.run(sessionId, i + 1, lines[i]!);
+    }
+  }
+
   put(session: Session, opts?: ArchivePutOptions): void {
     const meta = toMeta(session);
     const summaryJson = JSON.stringify({
@@ -131,48 +313,14 @@ export class ArchiveStore {
       subagents: meta.subagents,
     } satisfies SummaryJson);
     const bodyJson = JSON.stringify(toBody(session));
+    const lines = opts?.lines;
 
-    this.db
-      .prepare(`
-        INSERT INTO archive_sessions (
-          session_id, source_id, source_name, source_kind, source_location,
-          origin_json, project_id, cwd, file_path, slug, title, model, status,
-          is_subagent, parent_session_id, turn_count, cost_usd, started_at,
-          last_activity_at, duration_ms, summary_json, body_json, body_codec,
-          parser_version, first_seen_at, last_ingested_at
-        ) VALUES (
-          @sessionId, @sourceId, @sourceName, @sourceKind, @sourceLocation,
-          @originJson, @projectId, @cwd, @filePath, @slug, @title, @model, @status,
-          @isSubagent, @parentSessionId, @turnCount, @costUsd, @startedAt,
-          @lastActivityAt, @durationMs, @summaryJson, @bodyJson, 'json',
-          @parserVersion, datetime('now'), datetime('now')
-        )
-        ON CONFLICT (session_id) DO UPDATE SET
-          source_id = excluded.source_id,
-          source_name = excluded.source_name,
-          source_kind = excluded.source_kind,
-          source_location = excluded.source_location,
-          origin_json = excluded.origin_json,
-          project_id = excluded.project_id,
-          cwd = excluded.cwd,
-          file_path = excluded.file_path,
-          slug = excluded.slug,
-          title = excluded.title,
-          model = excluded.model,
-          status = excluded.status,
-          is_subagent = excluded.is_subagent,
-          parent_session_id = excluded.parent_session_id,
-          turn_count = excluded.turn_count,
-          cost_usd = excluded.cost_usd,
-          started_at = excluded.started_at,
-          last_activity_at = excluded.last_activity_at,
-          duration_ms = excluded.duration_ms,
-          summary_json = excluded.summary_json,
-          body_json = excluded.body_json,
-          parser_version = excluded.parser_version,
-          last_ingested_at = datetime('now')
-      `)
-      .run({
+    const txn = this.db.transaction(() => {
+      const previous = this.fileFingerprint(meta.id);
+      const lineCount = lines ? lines.length : (previous?.lineCount ?? 0);
+      const headHash = lines ? headHashOf(lines) : (previous?.headHash ?? null);
+
+      this.upsertRow.run({
         sessionId: meta.id,
         sourceId: meta.sourceId,
         sourceName: meta.sourceName,
@@ -196,13 +344,27 @@ export class ArchiveStore {
         summaryJson,
         bodyJson,
         parserVersion: opts?.parserVersion ?? 0,
+        fileSize: opts?.fileSize ?? previous?.size ?? null,
+        fileMtimeMs: opts?.fileMtimeMs ?? previous?.mtimeMs ?? null,
+        headHash,
+        rawLineCount: lineCount,
       });
+
+      if (lines) this.writeLines(meta.id, lines, previous);
+    });
+
+    txn();
   }
 
   deleteSession(sessionId: string): void {
-    this.db
-      .prepare('DELETE FROM archive_sessions WHERE session_id = ?')
-      .run(sessionId);
+    this.db.transaction(() => {
+      this.db
+        .prepare('DELETE FROM archive_raw_lines WHERE session_id = ?')
+        .run(sessionId);
+      this.db
+        .prepare('DELETE FROM archive_sessions WHERE session_id = ?')
+        .run(sessionId);
+    })();
   }
 
   stats(): ArchiveStats {
