@@ -11,7 +11,7 @@ Shared TypeScript strict mode settings in `tsconfig.base.json`. Each package has
 
 ## Multi-source setup
 
-The tracker can watch multiple `.claude` directories (e.g. WSL and Windows on the same host). Copy `server/config/sources.example.json` to `server/config/sources.json` and edit the paths to match your setup. Sessions for the same folder basename (case-insensitive) merge into one project regardless of which source recorded them.
+The tracker can watch multiple `.claude` directories (e.g. two machines, or WSL and Windows on the same host). Copy `server/config/sources.example.json` to `server/config/sources.json` and edit the paths to match your setup. Sessions for the same folder basename (case-insensitive) merge into one project regardless of which source recorded them.
 
 Without a `sources.json`, the tracker falls back to the `CLAUDE_DIR` env var (or `~/.claude`) as a single source.
 

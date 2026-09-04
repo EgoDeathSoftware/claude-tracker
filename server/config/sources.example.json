@@ -1,21 +1,21 @@
 {
   "sources": [
     {
-      "id": "wsl",
-      "name": "WSL",
-      "path": "/home/YOURUSER/.claude"
+      "id": "dir1",
+      "name": "Source 1",
+      "path": "/claude/dir1"
     },
     {
-      "id": "windows",
-      "name": "Windows",
-      "path": "/mnt/c/Users/YOURUSER/.claude"
+      "id": "dir2",
+      "name": "Source 2",
+      "path": "/claude/dir2"
     },
     {
       "id": "opencode",
       "name": "OpenCode",
       "kind": "opencode",
-      "path": "/home/YOURUSER/.local/share/opencode",
-      "configPath": "/home/YOURUSER/.config/opencode"
+      "path": "/opencode/data",
+      "configPath": "/opencode/config"
     },
     {
       "id": "agents",

@@ -12,8 +12,8 @@ services:
       - ./server/src:/app/server/src
       - ./server/test:/app/server/test
       - ./server/config:/app/server/config
-      - ${CLAUDE_DIR_WINDOWS}:/claude/windows:ro
-      - ${CLAUDE_DIR_WSL}:/claude/wsl:ro
+      - ${CLAUDE_DIR_1}:/claude/dir1:ro
+      - ${CLAUDE_DIR_2}:/claude/dir2:ro
       - ${OPENCODE_DATA_DIR}:/opencode/data:ro
       - ${OPENCODE_CONFIG_DIR}:/opencode/config:ro
       - ${AGENT_CLAUDE_ROOT}:/claude/agents:ro
