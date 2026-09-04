@@ -51,6 +51,7 @@ function makeUserLine(
   content: string,
   ts: string,
   cwd?: string,
+  gitBranch?: string,
 ): string {
   const rec: Record<string, unknown> = {
     type: 'user',
@@ -61,6 +62,7 @@ function makeUserLine(
     message: { role: 'user', content },
   };
   if (cwd) rec['cwd'] = cwd;
+  if (gitBranch) rec['gitBranch'] = gitBranch;
   return JSON.stringify(rec);
 }
 
@@ -70,10 +72,11 @@ async function seedSession(
   sessionId: string,
   cwd: string,
   ts: string,
+  gitBranch?: string,
 ): Promise<void> {
   const projectDir = join(claudeDir, 'projects', dirName);
   await mkdir(projectDir, { recursive: true });
-  const line = makeUserLine('u1', 'hello', ts, cwd);
+  const line = makeUserLine('u1', 'hello', ts, cwd, gitBranch);
   await writeFile(join(projectDir, `${sessionId}.jsonl`), line);
 }
 
@@ -136,6 +139,44 @@ describe('SessionRegistry', () => {
       expect(sessions).toHaveLength(2);
       expect(sessions[0]!.id).toBe('sess-b');
       expect(sessions[0]!.sourceId).toBe('windows');
+    } finally {
+      await reg.stop();
+    }
+  });
+
+  it('merges a worktree session into the main repo project via gitBranch', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reg-worktree-'));
+    cleanup.push(dir);
+
+    await seedSession(
+      dir,
+      '-mnt-c-Users-david-Projects-myrepo',
+      'sess-main',
+      '/mnt/c/Users/david/Projects/myrepo',
+      '2026-04-01T10:00:00.000Z',
+      'master',
+    );
+    await new Promise(r => setTimeout(r, 10));
+    await seedSession(
+      dir,
+      '-mnt-c-Users-david-Projects-myrepo-feature-x',
+      'sess-worktree',
+      '/mnt/c/Users/david/Projects/myrepo-feature-x',
+      '2026-04-02T10:00:00.000Z',
+      'feature-x',
+    );
+
+    const reg = new SessionRegistry([src('local', dir)]);
+    await reg.start();
+    try {
+      const projects = reg.getProjects();
+      expect(projects).toHaveLength(1);
+      expect(projects[0]!.id).toBe('myrepo');
+      expect(projects[0]!.name).toBe('myrepo');
+      expect(projects[0]!.sessionCount).toBe(2);
+
+      const sessions = reg.getSessions('myrepo');
+      expect(sessions.map(s => s.gitBranch).sort()).toEqual(['feature-x', 'master']);
     } finally {
       await reg.stop();
     }

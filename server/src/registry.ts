@@ -252,7 +252,7 @@ export class SessionRegistry extends EventEmitter {
       if (!existing) {
         map.set(session.projectId, {
           id: session.projectId,
-          name: displayNameFromCwd(session.cwd) || session.projectId,
+          name: displayNameFromCwd(session.cwd, session.gitBranch) || session.projectId,
           dirPath: session.cwd,
           sessionCount: 1,
           liveCount: session.status === 'live' ? 1 : 0,
@@ -266,7 +266,7 @@ export class SessionRegistry extends EventEmitter {
           existing.lastActivityAt = session.lastActivityAt;
           existing.dirPath = session.cwd;
           existing.name
-            = displayNameFromCwd(session.cwd) || session.projectId;
+            = displayNameFromCwd(session.cwd, session.gitBranch) || session.projectId;
         }
         if (!existing.sources.includes(session.sourceId)) {
           existing.sources.push(session.sourceId);

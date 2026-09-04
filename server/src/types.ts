@@ -128,6 +128,7 @@ export interface SessionMeta extends SourceSnapshot {
   lastActivityAt: string;
   durationMs: number;
   cwd: string;
+  gitBranch?: string | undefined;
   isSubagent: boolean;
   parentSessionId?: string | undefined;
   costBreakdown: CostBreakdown;

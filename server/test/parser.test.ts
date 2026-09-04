@@ -655,3 +655,51 @@ describe('parseSessionDetailed', () => {
     expect(PARSER_VERSION).toBeGreaterThan(0);
   });
 });
+
+describe('parseSession gitBranch', () => {
+  const gitBranchTmp: string[] = [];
+  afterEach(async () => {
+    for (const d of gitBranchTmp.splice(0)) await rm(d, { recursive: true, force: true });
+  });
+
+  async function writeFixture(records: unknown[]): Promise<string> {
+    const dir = await mkdtemp(join(tmpdir(), 'parse-branch-'));
+    gitBranchTmp.push(dir);
+    const file = join(dir, 'sess.jsonl');
+    await writeFile(file, records.map(r => JSON.stringify(r)).join('\n'), 'utf-8');
+    return file;
+  }
+
+  it('captures gitBranch from the first user record', async () => {
+    const file = await writeFixture([
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+        timestamp: '2026-09-01T10:00:00Z', cwd: '/home/user/myrepo-feature-x',
+        gitBranch: 'feature-x',
+        message: { role: 'user', content: 'hello' } },
+    ]);
+    const session = await parseSession(file, 'wsl', '-myrepo-feature-x');
+    expect(session.gitBranch).toBe('feature-x');
+  });
+
+  it('derives projectId merged with the main repo when the branch suffix matches', async () => {
+    const file = await writeFixture([
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+        timestamp: '2026-09-01T10:00:00Z', cwd: '/home/user/myrepo-feature-x',
+        gitBranch: 'feature-x',
+        message: { role: 'user', content: 'hello' } },
+    ]);
+    const session = await parseSession(file, 'wsl', '-myrepo-feature-x');
+    expect(session.projectId).toBe('myrepo');
+  });
+
+  it('leaves projectId unchanged when gitBranch is absent', async () => {
+    const file = await writeFixture([
+      { type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+        timestamp: '2026-09-01T10:00:00Z', cwd: '/home/user/myrepo-feature-x',
+        message: { role: 'user', content: 'hello' } },
+    ]);
+    const session = await parseSession(file, 'wsl', '-myrepo-feature-x');
+    expect(session.gitBranch).toBeUndefined();
+    expect(session.projectId).toBe('myrepo-feature-x');
+  });
+});

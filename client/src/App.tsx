@@ -5,10 +5,12 @@ import { SessionDetail } from '@/components/SessionDetail.tsx';
 import { PromptLibrary } from '@/components/PromptLibrary.tsx';
 import { SessionComparison } from '@/components/SessionComparison.tsx';
 import { ConfigPanel } from '@/components/config/ConfigPanel.tsx';
+import { Resizer } from '@/components/Resizer.tsx';
 import { useProjects } from '@/hooks/useProjects.ts';
 import { useSessions } from '@/hooks/useSessions.ts';
 import { useSSE } from '@/hooks/useSSE.ts';
 import { useSources } from '@/hooks/useSources.ts';
+import { useResizablePanel } from '@/hooks/useResizablePanel.ts';
 import type { SourceKind, SourceLocation } from '@/hooks/useSources.ts';
 import type { SessionMeta } from '@/types.ts';
 
@@ -23,6 +25,19 @@ export default function App() {
   const [compareMode, setCompareMode] = useState(false);
   const [compareIds, setCompareIds] = useState<string[]>([]);
   const [configOpen, setConfigOpen] = useState(false);
+
+  const projectsPanel = useResizablePanel({
+    storageKey: 'panelWidth:projects',
+    defaultWidth: 192,
+    min: 160,
+    max: 480,
+  });
+  const sessionsPanel = useResizablePanel({
+    storageKey: 'panelWidth:sessions',
+    defaultWidth: 288,
+    min: 220,
+    max: 600,
+  });
 
   const sources = useSources();
   const allKinds = useMemo(
@@ -99,7 +114,10 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-white text-sm font-sans">
-      <div className="flex flex-col">
+      <div
+        style={{ width: projectsPanel.width }}
+        className="shrink-0 flex flex-col"
+      >
         <ProjectList
           projects={projects}
           selectedId={selectedProjectId}
@@ -143,19 +161,24 @@ export default function App() {
           </button>
         </div>
       </div>
+      <Resizer onMouseDown={projectsPanel.startDrag} />
       {!configOpen && (
-        <SessionList
-          sessions={sessions}
-          selectedId={selectedSessionId}
-          projectId={selectedProjectId ?? undefined}
-          onSelect={id => {
-            setSelectedSessionId(id);
-            setConfigOpen(false);
-          }}
-          compareMode={compareMode}
-          compareIds={compareIds}
-          onToggleCompare={toggleCompare}
-        />
+        <>
+          <SessionList
+            sessions={sessions}
+            selectedId={selectedSessionId}
+            projectId={selectedProjectId ?? undefined}
+            onSelect={id => {
+              setSelectedSessionId(id);
+              setConfigOpen(false);
+            }}
+            compareMode={compareMode}
+            compareIds={compareIds}
+            onToggleCompare={toggleCompare}
+            width={sessionsPanel.width}
+          />
+          <Resizer onMouseDown={sessionsPanel.startDrag} />
+        </>
       )}
       {configOpen
         ? <ConfigPanel />

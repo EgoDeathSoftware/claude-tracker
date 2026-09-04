@@ -195,3 +195,40 @@ describe('applyOrigin', () => {
     expect(baseSession.projectId).toBe('workspace');
   });
 });
+
+describe('applyOrigin with gitBranch', () => {
+  it('strips a worktree branch suffix from the container name when deriving projectId', () => {
+    const worktreeSession: ParsedSession = {
+      id: 's2',
+      sourceId: 'agents:vercel.ai-feature-x',
+      projectId: 'workspace',
+      filePath: '/claude/agents/vercel.ai-feature-x/projects/-workspace/s2.jsonl',
+      slug: 's2',
+      title: 'A worktree session',
+      status: 'done' as const,
+      turnCount: 1,
+      costUsd: 0.1,
+      model: 'claude-opus-5',
+      startedAt: '2026-08-21T10:00:00Z',
+      lastActivityAt: '2026-08-21T10:05:00Z',
+      durationMs: 60_000,
+      cwd: '/workspace',
+      gitBranch: 'feature-x',
+      messages: [],
+      logEntries: [],
+      toolCalls: [],
+      fileChanges: [],
+      costBreakdown: { byTool: {}, conversationCost: 0, toolCost: 0, totalCost: 0 },
+      hookEvents: [],
+      permissionEvents: [],
+      subagents: [],
+      isSubagent: false,
+      recaps: [],
+    };
+    const out = applyOrigin(worktreeSession, {
+      container: 'myrepo-feature-x',
+      hostWorkspace: '/home/dave/Projects/myrepo-feature-x',
+    });
+    expect(out.projectId).toBe('myrepo');
+  });
+});

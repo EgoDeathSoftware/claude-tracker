@@ -15,7 +15,7 @@ import type {
  * the version they were parsed with, so POST /api/archive/reparse can find
  * and re-derive the stale ones from their stored raw lines.
  */
-export const PARSER_VERSION = 4;
+export const PARSER_VERSION = 5;
 
 export interface ParsedFile {
   session: ParsedSession;
@@ -37,6 +37,7 @@ interface RawUserRecord {
   timestamp: string;
   slug?: string;
   cwd?: string;
+  gitBranch?: string;
   sessionId?: string;
   message: { role: 'user'; content: string | ContentBlock[] };
 }
@@ -268,6 +269,7 @@ export function parseLines(
   let title = '(untitled)';
   let slug = '';
   let cwd = '';
+  let gitBranch: string | undefined;
   let sessionId = basename(filePath, '.jsonl');
   let model = 'unknown';
   let totalCostUsd = 0;
@@ -365,6 +367,7 @@ export function parseLines(
 
       if (!slug && rec.slug) slug = rec.slug;
       if (!cwd && rec.cwd) cwd = rec.cwd;
+      if (!gitBranch && rec.gitBranch) gitBranch = rec.gitBranch;
       // Every record in a subagent's own file carries its *parent's* session
       // id here (Claude Code stamps the outer session context on sidechain
       // records too), so trusting it would clobber the subagent's own,
@@ -471,7 +474,7 @@ export function parseLines(
     ? new Date(lastTimestamp).getTime() - new Date(firstTimestamp).getTime()
     : 0;
 
-  const projectId = deriveProjectKey(cwd, sourceId, dirName);
+  const projectId = deriveProjectKey(cwd, sourceId, dirName, gitBranch);
 
   return {
     id: sessionId,
@@ -488,6 +491,7 @@ export function parseLines(
     lastActivityAt,
     durationMs,
     cwd,
+    gitBranch,
     messages,
     logEntries,
     toolCalls: [...toolCallMap.values()],

@@ -42,7 +42,7 @@ export function ProjectList({
       .filter((k): k is SourceKind => k !== undefined);
 
   return (
-    <div className="w-48 shrink-0 border-r border-gray-200 bg-gray-50 flex flex-col">
+    <div className="w-full border-r border-gray-200 bg-gray-50 flex flex-col">
       <div className="px-4 py-3 border-b border-gray-200 flex items-start justify-between">
         <div>
           <div className="text-sm font-semibold text-gray-900">Projects</div>

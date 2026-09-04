@@ -104,6 +104,6 @@ export function applyOrigin(session: ParsedSession, origin: StoreOrigin): Parsed
   return {
     ...session,
     cwd,
-    projectId: deriveProjectKey(cwd, session.sourceId, origin.container),
+    projectId: deriveProjectKey(cwd, session.sourceId, origin.container, session.gitBranch),
   };
 }

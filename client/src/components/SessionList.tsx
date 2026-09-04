@@ -16,6 +16,7 @@ interface Props {
   compareMode?: boolean | undefined;
   compareIds?: string[] | undefined;
   onToggleCompare?: ((id: string) => void) | undefined;
+  width: number;
 }
 
 export function SessionList({
@@ -26,6 +27,7 @@ export function SessionList({
   compareMode,
   compareIds,
   onToggleCompare,
+  width,
 }: Props) {
   const { results, loading, search, clear } = useSearch(projectId);
   const allTags = useAllTags();
@@ -38,7 +40,10 @@ export function SessionList({
     : sessions;
 
   return (
-    <div className="w-72 shrink-0 border-r border-gray-200 flex flex-col">
+    <div
+      style={{ width }}
+      className="shrink-0 border-r border-gray-200 flex flex-col"
+    >
       <div className="px-3 py-2 border-b border-gray-200 space-y-2">
         <div className="flex items-center justify-between">
           <div className="text-sm font-semibold text-gray-900">
@@ -144,6 +149,15 @@ export function SessionList({
                         </span>
                       )}
                     </>
+                  )}
+                  {s.gitBranch && (
+                    <span
+                      title={`branch: ${s.gitBranch}`}
+                      className="px-1.5 py-0.5 rounded text-[9px] font-medium
+                        bg-gray-100 text-gray-600 max-w-[7rem] truncate"
+                    >
+                      {s.gitBranch}
+                    </span>
                   )}
                 </div>
                 <span className="text-[10px] text-gray-400">
