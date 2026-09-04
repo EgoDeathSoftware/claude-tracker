@@ -487,6 +487,30 @@ export class ArchiveStore {
     })();
   }
 
+  /** Session ids whose stored body predates the given parser version. */
+  listStale(parserVersion: number, limit: number): string[] {
+    return (
+      this.db
+        .prepare(`
+          SELECT session_id FROM archive_sessions
+          WHERE parser_version < ? AND raw_line_count > 0
+          ORDER BY last_activity_at DESC LIMIT ?
+        `)
+        .all(parserVersion, limit) as { session_id: string }[]
+    ).map(r => r.session_id);
+  }
+
+  /** Overwrite a session's derived body after a reparse. */
+  replaceBody(sessionId: string, body: SessionBody, parserVersion: number): void {
+    this.db
+      .prepare(`
+        UPDATE archive_sessions
+        SET body_json = ?, parser_version = ?, last_ingested_at = datetime('now')
+        WHERE session_id = ?
+      `)
+      .run(JSON.stringify(body), parserVersion, sessionId);
+  }
+
   stats(): ArchiveStats {
     return this.db
       .prepare(`

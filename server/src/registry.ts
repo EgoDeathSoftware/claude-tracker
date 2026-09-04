@@ -311,4 +311,9 @@ export class SessionRegistry extends EventEmitter {
   getSources(): Source[] {
     return this.sources;
   }
+
+  /** Drop a session from the in-memory map. Called by the delete route only. */
+  forgetSession(id: string): void {
+    this.sessions.delete(id);
+  }
 }

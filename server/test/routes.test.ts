@@ -7,6 +7,8 @@ import { buildApp } from '../src/routes.js';
 import { SessionRegistry } from '../src/registry.js';
 import { TrackerDB } from '../src/db.js';
 import type { Source } from '../src/sources.js';
+import { archivedSession } from './fixtures/session.js';
+import { PARSER_VERSION } from '../src/parser.js';
 
 function makeUserLine(uuid: string, content: string, ts: string, cwd?: string): string {
   const rec: Record<string, unknown> = {
@@ -355,5 +357,129 @@ describe('location filtering over HTTP', () => {
     expect(beta.origin.hostWorkspace).toBe('/host/beta');
     const gamma = sources.find((s: { id: string }) => s.id === 'agents:gamma');
     expect(gamma.parentId).toBe('agents');
+  });
+});
+
+describe('archive routes', () => {
+  it('serves an archived session detail from the database', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'));
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+
+    const res = await app.request('/api/sessions/gone-1');
+    expect(res.status).toBe(200);
+    const body = await res.json() as { archived: boolean; messages: unknown[] };
+    expect(body.archived).toBe(true);
+    expect(body.messages).toHaveLength(1);
+    await registry.stop();
+  });
+
+  it('serves an archived raw log from the database', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'), {
+      lines: ['{"type":"user","n":1}', '{"type":"user","n":2}'],
+    });
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+
+    const res = await app.request('/api/sessions/gone-1/raw?offset=0&limit=10');
+    expect(res.status).toBe(200);
+    const body = await res.json() as { total: number; lines: unknown[] };
+    expect(body.total).toBe(2);
+    expect(body.lines).toHaveLength(2);
+    await registry.stop();
+  });
+
+  it('404s the detail of an unknown session', async () => {
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+    expect((await app.request('/api/sessions/nope')).status).toBe(404);
+    await registry.stop();
+  });
+
+  it('reports archive stats', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'), { lines: ['{}'] });
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+
+    const body = await (await app.request('/api/archive/stats')).json() as {
+      sessionCount: number; rawLineCount: number; bytes: number;
+    };
+    expect(body.sessionCount).toBe(1);
+    expect(body.rawLineCount).toBe(1);
+    await registry.stop();
+  });
+
+  it('deletes a session from the archive and the derived index', async () => {
+    const db = new TrackerDB(':memory:');
+    const session = archivedSession('gone-1', 'ghost-source');
+    db.archive.put(session, { lines: ['{}'] });
+    db.indexSession(session);
+    db.addSessionTag('gone-1', 'temp');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+
+    const res = await app.request('/api/archive/sessions/gone-1', { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(db.archive.loadSummaries()).toHaveLength(0);
+    expect(db.getAllTags()).toEqual([]);
+    expect(registry.getSessions()).toHaveLength(0);
+    await registry.stop();
+  });
+
+  it('404s a delete for an unknown session', async () => {
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+    const res = await app.request('/api/archive/sessions/nope', { method: 'DELETE' });
+    expect(res.status).toBe(404);
+    await registry.stop();
+  });
+
+  it('reparse re-derives a stale body from stored raw lines', async () => {
+    const db = new TrackerDB(':memory:');
+    const session = archivedSession('gone-1', 'ghost-source');
+    db.archive.put(
+      { ...session, messages: [] },
+      {
+        lines: [JSON.stringify({
+          type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+          timestamp: '2026-09-01T10:00:00Z', cwd: '/workspace',
+          message: { role: 'user', content: 'recovered' },
+        })],
+        parserVersion: 0,
+      },
+    );
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+
+    const res = await app.request('/api/archive/reparse', { method: 'POST' });
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ reparsed: 1 });
+    expect(db.archive.getBody('gone-1')!.messages).toHaveLength(1);
+    await registry.stop();
+  });
+
+  it('reparse reports zero when nothing is stale', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'), {
+      lines: ['{}'], parserVersion: PARSER_VERSION,
+    });
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+    expect(await (await app.request('/api/archive/reparse', { method: 'POST' })).json())
+      .toEqual({ reparsed: 0 });
+    await registry.stop();
   });
 });

@@ -5,7 +5,8 @@ import { streamSSE } from 'hono/streaming';
 import type { SessionRegistry, SessionFilter } from './registry.ts';
 import type { TrackerDB } from './db.ts';
 import type { SourceKind, SourceLocation } from './sources.ts';
-import { readRawLines } from './parser.js';
+import { readRawLines, parseLines, PARSER_VERSION } from './parser.js';
+import { toBody } from './session-shape.js';
 import {
   readSettings,
   writeSettings,
@@ -111,27 +112,32 @@ export function buildApp(
   });
 
   app.get('/api/sessions/:id/raw', async c => {
-    const session = await registry.getSessionDetail(c.req.param('id'));
+    const session = registry.getSessionMeta(c.req.param('id'));
     if (!session) return c.json({ error: 'not found' }, 404);
     const offset = Number(c.req.query('offset') ?? '0');
     const limit = Math.min(Number(c.req.query('limit') ?? '200'), 500);
 
-    // opencode has no per-session file to tail - synthesize the same
-    // { lines: [{ lineNumber, content }], total } shape readRawLines
-    // returns, paginating over the already-parsed messages instead.
-    const source = registry.getSources().find(s => s.id === session.sourceId);
-    if (source?.kind === 'opencode') {
-      const total = session.messages.length;
+    // opencode never had a JSONL file and archives no raw lines, so its
+    // synthesized view (from already-parsed messages) stays first.
+    if (session.sourceKind === 'opencode') {
+      const detail = await registry.getSessionDetail(session.id);
+      const messages = detail?.messages ?? [];
+      const total = messages.length;
       const end = Math.min(offset + limit, total);
       const lines: { lineNumber: number; content: unknown }[] = [];
       for (let i = offset; i < end; i++) {
-        lines.push({ lineNumber: i + 1, content: session.messages[i] });
+        lines.push({ lineNumber: i + 1, content: messages[i] });
       }
       return c.json({ lines, total });
     }
 
-    const result = await readRawLines(session.filePath, offset, limit);
-    return c.json(result);
+    // An archived session may have no file left; its verbatim lines are in
+    // the archive.
+    if (session.archived) {
+      return c.json(db.archive.getRawLines(session.id, offset, limit));
+    }
+
+    return c.json(await readRawLines(session.filePath, offset, limit));
   });
 
   // --- Search ---
@@ -141,6 +147,43 @@ export function buildApp(
     const projectId = c.req.query('projectId');
     if (q.trim().length === 0) return c.json([]);
     return c.json(db.search(q, projectId));
+  });
+
+  // --- Archive ---
+
+  app.get('/api/archive/stats', c => c.json(db.archive.stats()));
+
+  app.delete('/api/archive/sessions/:id', async c => {
+    const id = c.req.param('id');
+    if (!db.archive.hasSession(id) && !registry.getSessionMeta(id)) {
+      return c.json({ error: 'not found' }, 404);
+    }
+    db.archive.deleteSession(id);
+    db.removeSession(id);
+    registry.forgetSession(id);
+    return c.json({ deleted: id });
+  });
+
+  app.post('/api/archive/reparse', async c => {
+    const limit = Math.min(Number(c.req.query('limit') ?? '500'), 5000);
+    const stale = db.archive.listStale(PARSER_VERSION, limit);
+    let reparsed = 0;
+    for (const id of stale) {
+      const meta = registry.getSessionMeta(id);
+      if (!meta) continue;
+      const lines = db.archive.rawLineStrings(id);
+      if (lines.length === 0) continue;
+      const fileStat = {
+        mtimeMs: new Date(meta.lastActivityAt).getTime(),
+        birthtimeMs: new Date(meta.startedAt).getTime(),
+      };
+      const parsed = parseLines(
+        lines, fileStat, meta.filePath, meta.sourceId, meta.projectId,
+      );
+      db.archive.replaceBody(id, toBody({ ...meta, ...parsed }), PARSER_VERSION);
+      reparsed++;
+    }
+    return c.json({ reparsed });
   });
 
   // --- Tags ---
