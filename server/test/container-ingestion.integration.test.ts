@@ -5,6 +5,8 @@ import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { SessionRegistry } from '../src/registry.js';
 import type { Source } from '../src/sources.js';
+import { TrackerDB } from '../src/db.js';
+import { buildApp } from '../src/routes.js';
 
 // Both packages are "type": "module", so __dirname does not exist. This is the
 // same pattern multi-source.integration.test.ts uses.
@@ -99,5 +101,81 @@ describe('container session ingestion', () => {
       join(STORES, 'vercel.ai', 'projects', '-workspace', 'container-a.jsonl'),
     );
     await registry.stop();
+  });
+});
+
+describe('a destroyed container keeps its sessions', () => {
+  it('serves the session, its project, its body and its raw log after removal', async () => {
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([storeSet], db);
+    await registry.start();
+
+    const before = registry.getSessions().find(s => s.sourceLocation === 'container');
+    expect(before).toBeDefined();
+    const sessionId = before!.id;
+    const projectId = before!.projectId;
+    const rawTotal = (await (
+      await buildApp(registry, db, '/tmp/llm.json')
+        .request(`/api/sessions/${sessionId}/raw`)
+    ).json() as { total: number }).total;
+    expect(rawTotal).toBeGreaterThan(0);
+
+    await registry.removeSource(before!.sourceId);
+
+    const after = registry.getSessions().find(s => s.id === sessionId);
+    expect(after).toBeDefined();
+    expect(after!.archived).toBe(true);
+    expect(after!.projectId).toBe(projectId);
+    expect(registry.getProjects().map(p => p.id)).toContain(projectId);
+
+    const detail = await registry.getSessionDetail(sessionId);
+    expect(detail!.messages.length).toBeGreaterThan(0);
+
+    const app = buildApp(registry, db, '/tmp/llm.json');
+    const raw = await (
+      await app.request(`/api/sessions/${sessionId}/raw`)
+    ).json() as { total: number };
+    expect(raw.total).toBe(rawTotal);
+
+    await registry.stop();
+  });
+
+  it('an archived container session still merges into its host project', async () => {
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([await makeHostSource(), storeSet], db);
+    await registry.start();
+
+    const containerSession = registry.getSessions()
+      .find(s => s.sourceLocation === 'container')!;
+    await registry.removeSource(containerSession.sourceId);
+
+    const project = registry.getProjects()
+      .find(p => p.id === containerSession.projectId)!;
+    expect(project.sessionCount).toBeGreaterThan(1);
+    await registry.stop();
+  });
+
+  it('a container session survives a full restart with its source gone', async () => {
+    const dbPath = join(await mkdtemp(join(tmpdir(), 'archive-')), 'tracker.db');
+    const db = new TrackerDB(dbPath);
+    const registry = new SessionRegistry([storeSet], db);
+    await registry.start();
+    const sessionId = registry.getSessions()
+      .find(s => s.sourceLocation === 'container')!.id;
+    await registry.stop();
+    db.close();
+
+    // Second boot with no sources at all, standing in for a host whose
+    // agent store directory has been deleted.
+    const db2 = new TrackerDB(dbPath);
+    const registry2 = new SessionRegistry([], db2);
+    await registry2.start();
+
+    const session = registry2.getSessions().find(s => s.id === sessionId);
+    expect(session).toBeDefined();
+    expect(session!.archived).toBe(true);
+    expect((await registry2.getSessionDetail(sessionId))!.messages.length)
+      .toBeGreaterThan(0);
+    await registry2.stop();
   });
 });

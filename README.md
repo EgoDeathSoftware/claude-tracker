@@ -29,6 +29,10 @@ A local webapp that tracks Claude Code agent sessions in real-time. Browse proje
 - MCP server manager — add, edit, remove servers
 - Hooks manager — view config and edit hook scripts
 
+**Durable archive**
+- Every session's transcript is persisted to SQLite as it's parsed, not just held in memory — a session survives its source going away (container destroyed, host unmounted, Claude Code's own cleanup) and stays fully browsable, badged as archived
+- See the "Session archive" section in `CLAUDE.md` for how it works
+
 ## Tech Stack
 
 | Layer | Technology |
@@ -142,6 +146,10 @@ claude-project-tracker/
 | `CLAUDE_DIR` | `~/.claude` | Path to Claude Code data directory |
 | `DATA_DIR` | `$CLAUDE_DIR/tracker` | SQLite database location |
 | `PORT` | `3001` | Server port |
+| `STORE_ACTIVE_DAYS` | `14` | A container store with no transcript/marker newer than this many days stops getting a live watcher (still scanned and browsable) |
+| `STORE_POLL_MS` | `30000` | How often a `store-set` source polls for new/removed container stores and re-evaluates watch activity |
+| `ARCHIVE_FLUSH_MS` | `15000` | Minimum interval between archive body rewrites for a `live` session; raw lines always append immediately |
+| `ARCHIVE_RESCAN` | unset | Set to `1` to force a full re-parse of every transcript at startup instead of skipping files whose size/mtime match the archive's stored fingerprint |
 
 ## Development
 
