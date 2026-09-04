@@ -1,16 +1,7 @@
 import { useEffect, useState } from 'react';
+import type { SourceKind, SourceLocation, StoreOrigin } from '@/types.ts';
 
-export type SourceKind = 'claude-code' | 'opencode';
-export type SourceLocation = 'host' | 'container';
-
-export interface StoreOrigin {
-  container: string;
-  image?: string;
-  hostWorkspace?: string;
-  workspaceMount?: string;
-  host?: string;
-  updatedAt?: string;
-}
+export type { SourceKind, SourceLocation, StoreOrigin } from '@/types.ts';
 
 export interface Source {
   id: string;

@@ -6,10 +6,10 @@ import { useSearch } from '@/hooks/useSearch.ts';
 import { useAllTags } from '@/hooks/useTags.ts';
 import { useSources } from '@/hooks/useSources.ts';
 import { SourceKindDots } from '@/components/SourceKindDots.tsx';
-import type { Session } from '@/types.ts';
+import type { SessionMeta } from '@/types.ts';
 
 interface Props {
-  sessions: Session[];
+  sessions: SessionMeta[];
   selectedId: string | null;
   projectId?: string | undefined;
   onSelect: (id: string) => void;
@@ -92,10 +92,12 @@ export function SessionList({
           </div>
         )}
         {displayed.map(s => {
+          // Provenance comes from the session's own snapshot: an archived
+          // session's source is gone from /api/sources entirely.
           const source = sourceById.get(s.sourceId);
-          const badgeLabel = source && source.location === 'container'
-            ? (source.origin?.container ?? source.name)
-            : source?.name;
+          const badgeLabel = s.sourceLocation === 'container'
+            ? (s.origin?.container ?? s.sourceName)
+            : (source?.name ?? s.sourceName);
           return (
             <button
               key={s.id}
@@ -118,11 +120,12 @@ export function SessionList({
               <div className="flex items-center justify-between mb-1">
                 <div className="flex items-center gap-1.5">
                   <StatusBadge status={s.status} />
-                  {(sources.length > 1 || source?.location === 'container') && source && (
+                  {(sources.length > 1 || s.sourceLocation === 'container'
+                    || s.archived) && (
                     <>
-                      <SourceKindDots kinds={[source.kind]} />
+                      <SourceKindDots kinds={[s.sourceKind]} />
                       <span
-                        title={source.location === 'container'
+                        title={s.sourceLocation === 'container'
                           ? `container: ${badgeLabel}`
                           : badgeLabel}
                         className="px-1.5 py-0.5 rounded text-[9px] font-medium
@@ -131,6 +134,15 @@ export function SessionList({
                       >
                         {badgeLabel}
                       </span>
+                      {s.archived && (
+                        <span
+                          title="Source no longer present; served from the archive"
+                          className="px-1.5 py-0.5 rounded text-[9px] font-medium
+                            bg-amber-100 text-amber-700 uppercase tracking-wide"
+                        >
+                          archived
+                        </span>
+                      )}
                     </>
                   )}
                 </div>

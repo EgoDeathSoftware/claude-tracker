@@ -10,11 +10,10 @@ import { PermissionsHooks } from '@/components/PermissionsHooks.tsx';
 import { AgentTree } from '@/components/AgentTree.tsx';
 import { TagPills } from '@/components/TagPills.tsx';
 import { useSessionTags } from '@/hooks/useTags.ts';
-import { useSources } from '@/hooks/useSources.ts';
-import type { Session } from '@/types.ts';
+import type { Session, SessionMeta } from '@/types.ts';
 
 interface Props {
-  session: Session | null;
+  session: SessionMeta | null;
 }
 
 export function SessionDetail({ session }: Props) {
@@ -23,7 +22,6 @@ export function SessionDetail({ session }: Props) {
   const { tags, addTag, removeTag } = useSessionTags(
     session?.id ?? null,
   );
-  const sources = useSources();
 
   useEffect(() => {
     if (!session) {
@@ -47,8 +45,6 @@ export function SessionDetail({ session }: Props) {
       </div>
     );
   }
-
-  const source = sources.find(s => s.id === fullSession.sourceId);
 
   const tabs = [
     {
@@ -102,13 +98,19 @@ export function SessionDetail({ session }: Props) {
         <div className="text-xs text-gray-400 mt-0.5">
           {formatMeta(fullSession)}
         </div>
-        {source?.location === 'container' && (
+        {fullSession.sourceLocation === 'container' && (
           <div className="text-[11px] text-gray-400 mt-0.5 flex flex-wrap gap-x-2">
-            <span>container: {source.origin?.container ?? source.name}</span>
-            {source.origin?.image && <span>· {source.origin.image}</span>}
-            {source.origin?.hostWorkspace && (
-              <span className="truncate">· {source.origin.hostWorkspace}</span>
+            <span>container: {fullSession.origin?.container ?? fullSession.sourceName}</span>
+            {fullSession.origin?.image && <span>· {fullSession.origin.image}</span>}
+            {fullSession.origin?.hostWorkspace && (
+              <span className="truncate">· {fullSession.origin.hostWorkspace}</span>
             )}
+          </div>
+        )}
+        {fullSession.archived && (
+          <div className="text-[11px] text-amber-700 mt-0.5">
+            Archived — {fullSession.sourceName} is no longer connected.
+            Served from the tracker database.
           </div>
         )}
         <div className="mt-1.5">

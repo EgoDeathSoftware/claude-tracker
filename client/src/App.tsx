@@ -10,7 +10,7 @@ import { useSessions } from '@/hooks/useSessions.ts';
 import { useSSE } from '@/hooks/useSSE.ts';
 import { useSources } from '@/hooks/useSources.ts';
 import type { SourceKind, SourceLocation } from '@/hooks/useSources.ts';
-import type { Session } from '@/types.ts';
+import type { SessionMeta } from '@/types.ts';
 
 export default function App() {
   const [selectedProjectId, setSelectedProjectId] = useState<
@@ -67,7 +67,7 @@ export default function App() {
   );
 
   const handleCreated = useCallback(
-    (session: Session) => {
+    (session: SessionMeta) => {
       setSessions(prev => [
         session,
         ...prev.filter(s => s.id !== session.id),
@@ -78,7 +78,7 @@ export default function App() {
   );
 
   const handleUpdated = useCallback(
-    (session: Session) => {
+    (session: SessionMeta) => {
       setSessions(prev =>
         prev.map(s => (s.id === session.id ? session : s)),
       );

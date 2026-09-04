@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import type { Session } from '@/types.ts';
+import type { SessionMeta } from '@/types.ts';
 import type { SourceKind, SourceLocation } from '@/hooks/useSources.ts';
 
 export function useSessions(
@@ -7,7 +7,7 @@ export function useSessions(
   kinds?: SourceKind[],
   locations?: SourceLocation[],
 ) {
-  const [sessions, setSessions] = useState<Session[]>([]);
+  const [sessions, setSessions] = useState<SessionMeta[]>([]);
   // undefined means "no filter"; '' means "filtered down to nothing" (every
   // checkbox deselected) — these must stay distinguishable all the way to
   // the server, so this is NOT `?? ''`.

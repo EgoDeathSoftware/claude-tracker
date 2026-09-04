@@ -3,6 +3,18 @@
 
 export type SessionStatus = 'live' | 'waiting' | 'done';
 
+export type SourceKind = 'claude-code' | 'opencode';
+export type SourceLocation = 'host' | 'container';
+
+export interface StoreOrigin {
+  container: string;
+  image?: string;
+  hostWorkspace?: string;
+  workspaceMount?: string;
+  host?: string;
+  updatedAt?: string;
+}
+
 export interface ContentBlock {
   type: 'text' | 'tool_use' | 'tool_result' | 'thinking';
   text?: string;
@@ -104,7 +116,16 @@ export interface SubagentInfo {
   durationMs: number;
 }
 
-export interface Session {
+/** Provenance snapshotted onto a session so it survives its source's removal. */
+export interface SourceSnapshot {
+  sourceName: string;
+  sourceKind: SourceKind;
+  sourceLocation: SourceLocation;
+  origin?: StoreOrigin | undefined;
+}
+
+/** Everything list views and filters need. Small and bounded; held in memory. */
+export interface SessionMeta extends SourceSnapshot {
   id: string;
   sourceId: string;
   projectId: string;
@@ -119,19 +140,27 @@ export interface Session {
   lastActivityAt: string;
   durationMs: number;
   cwd: string;
+  isSubagent: boolean;
+  parentSessionId?: string | undefined;
+  costBreakdown: CostBreakdown;
+  subagents: SubagentInfo[];
+  /** True when no live watcher currently backs this session. Derived, never stored. */
+  archived: boolean;
+  aiSummary?: AiSummary | undefined;
+}
+
+/** The heavy arrays. Stored in SQLite, loaded only when a session is opened. */
+export interface SessionBody {
   messages: SessionMessage[];
   logEntries: RawLogEntry[];
   toolCalls: ToolCallEntry[];
   fileChanges: FileChangeEntry[];
-  costBreakdown: CostBreakdown;
   hookEvents: HookEvent[];
   permissionEvents: PermissionEvent[];
-  subagents: SubagentInfo[];
-  parentSessionId?: string | undefined;
-  isSubagent: boolean;
   recaps: RecapEntry[];
-  aiSummary?: AiSummary | undefined;
 }
+
+export type Session = SessionMeta & SessionBody;
 
 export interface Project {
   id: string;
