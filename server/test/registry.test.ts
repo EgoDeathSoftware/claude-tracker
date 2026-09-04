@@ -415,7 +415,7 @@ describe('runtime source churn', () => {
     await registry.stop();
   });
 
-  it('drops the removed source sessions and leaves others intact', async () => {
+  it('archives the removed source\'s sessions and leaves others intact', async () => {
     const root = await mkdtemp(join(tmpdir(), 'registry-rm-'));
     const a = await makeStore(root, 'alpha', 'sess-alpha');
     const b = await makeStore(root, 'beta', 'sess-beta');
@@ -434,8 +434,11 @@ describe('runtime source churn', () => {
 
     await registry.removeSource('agents:alpha');
     const remaining = registry.getSessions();
-    expect(remaining).toHaveLength(1);
-    expect(remaining[0]?.sourceId).toBe('agents:beta');
+    expect(remaining).toHaveLength(2);
+    const alpha = remaining.find(s => s.sourceId === 'agents:alpha');
+    expect(alpha?.archived).toBe(true);
+    const beta = remaining.find(s => s.sourceId === 'agents:beta');
+    expect(beta?.archived).toBe(false);
     expect(registry.getSources().map(s => s.id)).toEqual(['agents:beta']);
     await registry.stop();
   });
@@ -447,7 +450,7 @@ describe('runtime source churn', () => {
     await registry.stop();
   });
 
-  it('removes SQLite state when a source is removed', async () => {
+  it('keeps SQLite state when a source is removed', async () => {
     const root = await mkdtemp(join(tmpdir(), 'registry-db-rm-'));
     const storePath = await makeStore(root, 'demo', 'sess-searchme');
     const db = new TrackerDB(':memory:');
@@ -462,7 +465,7 @@ describe('runtime source churn', () => {
     expect(db.search('hi')).toHaveLength(1);
 
     await registry.removeSource('agents:demo');
-    expect(db.search('hi')).toHaveLength(0);
+    expect(db.search('hi')).toHaveLength(1);
     await registry.stop();
   });
 
@@ -487,8 +490,11 @@ describe('runtime source churn', () => {
     expect(sources[0]?.path).toBe(second);
 
     const sessions = registry.getSessions();
-    expect(sessions).toHaveLength(1);
-    expect(sessions[0]?.id).toBe('sess-second');
+    expect(sessions).toHaveLength(2);
+    const firstSession = sessions.find(s => s.id === 'sess-first');
+    expect(firstSession?.archived).toBe(true);
+    const secondSession = sessions.find(s => s.id === 'sess-second');
+    expect(secondSession?.archived).toBe(false);
     await registry.stop();
   });
 });
@@ -762,6 +768,123 @@ describe('SessionRegistry archive hydration', () => {
     await registry.start();
     expect(registry.getSessions().map(s => s.id)).toEqual(['parent']);
     expect(registry.getSessionMeta('sub')).toBeDefined();
+    await registry.stop();
+  });
+});
+
+describe('SessionRegistry non-destructive source removal', () => {
+  const cleanup: string[] = [];
+  afterEach(async () => {
+    for (const d of cleanup.splice(0)) {
+      await rm(d, { recursive: true, force: true });
+    }
+  });
+
+  it('keeps a removed source\'s sessions, marked archived', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reg-archive-'));
+    cleanup.push(dir);
+    await seedSession(dir, '-workspace', 'a1', '/workspace', '2026-09-01T10:00:00.000Z');
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([src('wsl', dir)], db);
+    await registry.start();
+    expect(registry.getSessions().find(s => s.id === 'a1')!.archived).toBe(false);
+
+    await registry.removeSource('wsl');
+
+    const session = registry.getSessions().find(s => s.id === 'a1');
+    expect(session).toBeDefined();
+    expect(session!.archived).toBe(true);
+    await registry.stop();
+  });
+
+  it('keeps FTS, tags and summaries for a removed source', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reg-archive-'));
+    cleanup.push(dir);
+    await seedSession(dir, '-workspace', 'a1', '/workspace', '2026-09-01T10:00:00.000Z');
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([src('wsl', dir)], db);
+    await registry.start();
+    db.addSessionTag('a1', 'keepme');
+
+    await registry.removeSource('wsl');
+
+    expect(db.getSessionTags('a1').map(t => t.name)).toEqual(['keepme']);
+    expect(db.getAllTags().map(t => t.name)).toEqual(['keepme']);
+    await registry.stop();
+  });
+
+  it('keeps the archived body readable after removal', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reg-archive-'));
+    cleanup.push(dir);
+    await seedSession(dir, '-workspace', 'a1', '/workspace', '2026-09-01T10:00:00.000Z');
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([src('wsl', dir)], db);
+    await registry.start();
+
+    await registry.removeSource('wsl');
+
+    const detail = await registry.getSessionDetail('a1');
+    expect(detail!.messages.length).toBeGreaterThan(0);
+    await registry.stop();
+  });
+
+  it('still drops the source from getSources', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'reg-archive-'));
+    cleanup.push(dir);
+    await seedSession(dir, '-workspace', 'a1', '/workspace', '2026-09-01T10:00:00.000Z');
+    const registry = new SessionRegistry([src('wsl', dir)], new TrackerDB(':memory:'));
+    await registry.start();
+    await registry.removeSource('wsl');
+    expect(registry.getSources()).toEqual([]);
+    await registry.stop();
+  });
+});
+
+describe('SessionRegistry filters archived sessions by snapshot', () => {
+  it('matches a kind filter for a session whose source is gone', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'));
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+
+    expect(registry.getSessions(undefined, { kinds: ['claude-code'] }))
+      .toHaveLength(1);
+    expect(registry.getSessions(undefined, { kinds: ['opencode'] }))
+      .toHaveLength(0);
+    await registry.stop();
+  });
+
+  it('matches a location filter for a session whose source is gone', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put({
+      ...archivedSession('gone-1', 'ghost-source'),
+      sourceLocation: 'container',
+    });
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+
+    expect(registry.getSessions(undefined, { locations: ['container'] }))
+      .toHaveLength(1);
+    expect(registry.getSessions(undefined, { locations: ['host'] }))
+      .toHaveLength(0);
+    await registry.stop();
+  });
+
+  it('an explicitly empty filter still matches nothing', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'));
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    expect(registry.getSessions(undefined, { kinds: [] })).toHaveLength(0);
+    await registry.stop();
+  });
+
+  it('archived projects appear in getProjects under a matching filter', async () => {
+    const db = new TrackerDB(':memory:');
+    db.archive.put(archivedSession('gone-1', 'ghost-source'));
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    expect(registry.getProjects({ kinds: ['claude-code'] })).toHaveLength(1);
     await registry.stop();
   });
 });

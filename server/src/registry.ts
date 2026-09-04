@@ -45,8 +45,6 @@ export class SessionRegistry extends EventEmitter {
   private storeSets: StoreSetWatcher[] = [];
   private sessions = new Map<string, SessionMeta>();
   private db: TrackerDB | null;
-  private kindBySourceId: Map<string, SourceKind>;
-  private locationBySourceId: Map<string, SourceLocation>;
 
   constructor(
     private sources: Source[],
@@ -55,8 +53,6 @@ export class SessionRegistry extends EventEmitter {
   ) {
     super();
     this.db = db ?? null;
-    this.kindBySourceId = new Map(this.sources.map(s => [s.id, s.kind]));
-    this.locationBySourceId = new Map(this.sources.map(s => [s.id, s.location]));
   }
 
   private subscribe(watcher: AgentWatcher): void {
@@ -144,6 +140,7 @@ export class SessionRegistry extends EventEmitter {
     // miss and leak.
     await Promise.allSettled(this.storeSets.map(w => w.stop()));
     await Promise.allSettled([...this.watchers.values()].map(w => w.stop()));
+    this.db?.archive.flushAll();
   }
 
   /**
@@ -162,8 +159,6 @@ export class SessionRegistry extends EventEmitter {
       this.watcherOptions(source, opts?.watch ?? true),
     );
     this.sources.push(source);
-    this.kindBySourceId.set(source.id, source.kind);
-    this.locationBySourceId.set(source.id, source.location);
     this.watchers.set(source.id, watcher);
 
     try {
@@ -177,11 +172,12 @@ export class SessionRegistry extends EventEmitter {
   }
 
   /**
-   * Deregister a source and drop the sessions it contributed. Callers must
-   * not remove a source with `parentId` set except through its owning
-   * StoreSetWatcher — that watcher's own `known` state wouldn't learn of an
-   * external removal, so the store would silently stay gone until its
-   * container relaunches and rewrites its marker.
+   * Deregister a source and archive the sessions it contributed in place —
+   * they stay listed and browsable from the archive. Callers must not remove
+   * a source with `parentId` set except through its owning StoreSetWatcher —
+   * that watcher's own `known` state wouldn't learn of an external removal,
+   * so the store would silently stay gone until its container relaunches and
+   * rewrites its marker.
    */
   async removeSource(id: string): Promise<void> {
     const watcher = this.watchers.get(id);
@@ -193,13 +189,15 @@ export class SessionRegistry extends EventEmitter {
     }
     watcher.removeAllListeners();
     this.watchers.delete(id);
-    this.kindBySourceId.delete(id);
-    this.locationBySourceId.delete(id);
     this.sources = this.sources.filter(s => s.id !== id);
+
+    // A destroyed container takes this path on every StoreSetWatcher poll.
+    // Its sessions stay listed, browsable from the archive, and keep their
+    // FTS rows, tags and cached summaries; only the live binding is dropped.
+    this.db?.archive.flushAll();
     for (const [sessionId, session] of this.sessions) {
       if (session.sourceId === id) {
-        this.sessions.delete(sessionId);
-        this.db?.removeSession(sessionId);
+        this.sessions.set(sessionId, { ...session, archived: true });
       }
     }
     this.emit('sources-changed');
@@ -227,18 +225,14 @@ export class SessionRegistry extends EventEmitter {
   }
 
   /**
-   * Single predicate consulted by both getProjects and getSessions. Sessions
-   * whose source has since been removed (kind/location lookup misses) are
-   * excluded from any active filter rather than risking a stale match.
+   * Single predicate consulted by both getProjects and getSessions. Kind and
+   * location come from the session's own snapshot rather than the live source
+   * table, so a session whose source has been removed still filters correctly.
    */
-  private matches(sourceId: string, filter?: SessionFilter): boolean {
-    if (filter?.kinds) {
-      const kind = this.kindBySourceId.get(sourceId);
-      if (!kind || !filter.kinds.includes(kind)) return false;
-    }
-    if (filter?.locations) {
-      const location = this.locationBySourceId.get(sourceId);
-      if (!location || !filter.locations.includes(location)) return false;
+  private matches(session: SessionMeta, filter?: SessionFilter): boolean {
+    if (filter?.kinds && !filter.kinds.includes(session.sourceKind)) return false;
+    if (filter?.locations && !filter.locations.includes(session.sourceLocation)) {
+      return false;
     }
     return true;
   }
@@ -247,7 +241,7 @@ export class SessionRegistry extends EventEmitter {
     const map = new Map<string, Project>();
     for (const session of this.sessions.values()) {
       if (session.isSubagent) continue;
-      if (!this.matches(session.sourceId, filter)) continue;
+      if (!this.matches(session, filter)) continue;
       const existing = map.get(session.projectId);
       if (!existing) {
         map.set(session.projectId, {
@@ -282,7 +276,7 @@ export class SessionRegistry extends EventEmitter {
 
   getSessions(projectId?: string, filter?: SessionFilter): SessionMeta[] {
     const all = [...this.sessions.values()].filter(
-      s => !s.isSubagent && this.matches(s.sourceId, filter),
+      s => !s.isSubagent && this.matches(s, filter),
     );
     const filtered = projectId
       ? all.filter(s => s.projectId === projectId)
