@@ -324,3 +324,80 @@ describe('SourceWatcher archive write-through', () => {
     await watcher.stop();
   });
 });
+
+describe('SourceWatcher startup fingerprint skip', () => {
+  it('does not re-parse a file whose size and mtime are unchanged', async () => {
+    const dir = await makeClaudeDir([
+      { project: '-workspace', session: 'a1', cwd: '/workspace' },
+    ]);
+    const db = new TrackerDB(':memory:');
+
+    const first = new SourceWatcher(src('wsl', dir), db, { watch: false });
+    await first.start();
+    await first.stop();
+    const before = db.archive.fileFingerprint('a1')!;
+
+    const second = new SourceWatcher(src('wsl', dir), db, { watch: false });
+    await second.start();
+
+    expect(second.getAllSessions().map(s => s.id)).toContain('a1');
+    expect(db.archive.fileFingerprint('a1')).toEqual(before);
+    await second.stop();
+  });
+
+  it('re-parses when the file has grown', async () => {
+    const dir = await makeClaudeDir([
+      { project: '-workspace', session: 'a1', cwd: '/workspace' },
+    ]);
+    const db = new TrackerDB(':memory:');
+    const first = new SourceWatcher(src('wsl', dir), db, { watch: false });
+    await first.start();
+    await first.stop();
+    const beforeLines = db.archive.getRawLines('a1', 0, 100).total;
+
+    await appendRecord(dir, '-workspace', 'a1', {
+      type: 'user', uuid: 'u2', parentUuid: 'u1', isSidechain: false,
+      timestamp: '2026-09-01T11:00:00Z',
+      message: { role: 'user', content: 'more' },
+    });
+
+    const second = new SourceWatcher(src('wsl', dir), db, { watch: false });
+    await second.start();
+    expect(db.archive.getRawLines('a1', 0, 100).total).toBe(beforeLines + 1);
+    await second.stop();
+  });
+
+  it('rescan: true re-parses even an unchanged file', async () => {
+    const dir = await makeClaudeDir([
+      { project: '-workspace', session: 'a1', cwd: '/workspace' },
+    ]);
+    const db = new TrackerDB(':memory:');
+    const first = new SourceWatcher(src('wsl', dir), db, { watch: false });
+    await first.start();
+    await first.stop();
+
+    const second = new SourceWatcher(src('wsl', dir), db, {
+      watch: false, rescan: true,
+    });
+    await second.start();
+    expect(second.getAllSessions().map(s => s.id)).toContain('a1');
+    await second.stop();
+  });
+
+  it('a skipped session is still served in memory from the archive', async () => {
+    const dir = await makeClaudeDir([
+      { project: '-workspace', session: 'a1', cwd: '/workspace' },
+    ]);
+    const db = new TrackerDB(':memory:');
+    const first = new SourceWatcher(src('wsl', dir), db, { watch: false });
+    await first.start();
+    await first.stop();
+
+    const second = new SourceWatcher(src('wsl', dir), db, { watch: false });
+    await second.start();
+    const session = second.getAllSessions().find(s => s.id === 'a1')!;
+    expect(session.messages.length).toBeGreaterThan(0);
+    expect(session.archived).toBe(false);
+    await second.stop();
+  });
+});

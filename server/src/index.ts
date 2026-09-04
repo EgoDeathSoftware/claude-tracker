@@ -18,6 +18,7 @@ const port = Number(process.env['PORT'] ?? 3001);
 const storeActiveDays = parseOptionalNumberEnv('STORE_ACTIVE_DAYS');
 const storePollMs = parseOptionalNumberEnv('STORE_POLL_MS');
 const archiveFlushMs = parseOptionalNumberEnv('ARCHIVE_FLUSH_MS');
+const archiveRescan = process.env['ARCHIVE_RESCAN'] === '1';
 
 const sources = await loadSources(
   sourcesConfigPath,
@@ -32,7 +33,8 @@ if (sources.length === 0) {
 
 const db = new TrackerDB(join(dataDir, 'tracker.db'), { flushMs: archiveFlushMs });
 const registry = new SessionRegistry(
-  sources, db, { activeDays: storeActiveDays, pollMs: storePollMs },
+  sources, db,
+  { activeDays: storeActiveDays, pollMs: storePollMs, rescan: archiveRescan },
 );
 await registry.start();
 startAutoSummarizePoller(registry, db, llmConfigPath);

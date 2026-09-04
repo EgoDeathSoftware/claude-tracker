@@ -269,6 +269,13 @@ export class ArchiveStore {
     return rows.map(rowToMeta);
   }
 
+  loadSummary(sessionId: string): SessionMeta | null {
+    const row = this.db
+      .prepare(`SELECT ${SUMMARY_COLUMNS} FROM archive_sessions WHERE session_id = ?`)
+      .get(sessionId) as ArchiveRow | undefined;
+    return row ? rowToMeta(row) : null;
+  }
+
   getBody(sessionId: string): SessionBody | null {
     const row = this.db
       .prepare('SELECT body_json FROM archive_sessions WHERE session_id = ?')

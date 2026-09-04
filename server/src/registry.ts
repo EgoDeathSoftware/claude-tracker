@@ -21,6 +21,11 @@ export interface SessionFilter {
   locations?: SourceLocation[] | undefined;
 }
 
+export interface RegistryOptions extends StoreSetWatcherOptions {
+  /** Re-parse every transcript at startup, ignoring archive fingerprints. */
+  rescan?: boolean | undefined;
+}
+
 interface AgentWatcher extends EventEmitter {
   start(): Promise<void>;
   stop(): Promise<void>;
@@ -49,7 +54,7 @@ export class SessionRegistry extends EventEmitter {
   constructor(
     private sources: Source[],
     db?: TrackerDB,
-    private readonly storeSetOptions?: StoreSetWatcherOptions,
+    private readonly storeSetOptions?: RegistryOptions,
   ) {
     super();
     this.db = db ?? null;
@@ -73,6 +78,7 @@ export class SessionRegistry extends EventEmitter {
       transformSession: origin
         ? (s: ParsedSession) => applyOrigin(s, origin)
         : undefined,
+      rescan: this.storeSetOptions?.rescan,
     };
   }
 

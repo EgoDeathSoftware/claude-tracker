@@ -24,6 +24,7 @@ services:
       - STORE_ACTIVE_DAYS=${STORE_ACTIVE_DAYS:-}
       - STORE_POLL_MS=${STORE_POLL_MS:-}
       - ARCHIVE_FLUSH_MS=${ARCHIVE_FLUSH_MS:-}
+      - ARCHIVE_RESCAN=${ARCHIVE_RESCAN:-}
     restart: unless-stopped
 
 volumes:

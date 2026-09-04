@@ -1,5 +1,5 @@
 import { watch } from 'chokidar';
-import { readdir } from 'node:fs/promises';
+import { readdir, stat } from 'node:fs/promises';
 import { join, basename, dirname, relative, sep } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { parseSessionDetailed, PARSER_VERSION } from './parser.js';
@@ -13,6 +13,8 @@ export interface SourceWatcherOptions {
   watch?: boolean | undefined;
   /** Applied to every parsed session before it is decorated or stored. */
   transformSession?: ((session: ParsedSession) => ParsedSession) | undefined;
+  /** Re-parse every file even when its fingerprint is unchanged. Default false. */
+  rescan?: boolean | undefined;
 }
 
 export class SourceWatcher extends EventEmitter {
@@ -22,6 +24,7 @@ export class SourceWatcher extends EventEmitter {
   private db: TrackerDB | null;
   private readonly watchEnabled: boolean;
   private readonly transformSession: (session: ParsedSession) => ParsedSession;
+  private readonly rescan: boolean;
   public readonly sourceId: string;
 
   constructor(
@@ -35,6 +38,7 @@ export class SourceWatcher extends EventEmitter {
     this.db = db ?? null;
     this.watchEnabled = options?.watch ?? true;
     this.transformSession = options?.transformSession ?? (s => s);
+    this.rescan = options?.rescan ?? false;
   }
 
   async start(): Promise<void> {
@@ -97,6 +101,22 @@ export class SourceWatcher extends EventEmitter {
     dirName: string,
   ): Promise<void> {
     try {
+      const sessionId = basename(filePath, '.jsonl');
+      if (!this.rescan && this.db) {
+        const fp = this.db.archive.fileFingerprint(sessionId);
+        const st = await stat(filePath).catch(() => null);
+        // Both must match exactly. A file that grew, shrank, or was rewritten
+        // has a different size or mtime and falls through to a full parse.
+        if (fp && st && fp.size === st.size && fp.mtimeMs === st.mtimeMs) {
+          const body = this.db.archive.getBody(sessionId);
+          const meta = this.db.archive.loadSummary(sessionId);
+          if (body && meta) {
+            this.sessions.set(sessionId, { ...meta, ...body, archived: false });
+            return;
+          }
+        }
+      }
+
       const parsed = await parseSessionDetailed(filePath, this.sourceId, dirName);
       const session = decorateSession(
         this.transformSession(parsed.session), this.source,
