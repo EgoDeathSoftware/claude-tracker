@@ -10,38 +10,37 @@ import { PermissionsHooks } from '@/components/PermissionsHooks.tsx';
 import { AgentTree } from '@/components/AgentTree.tsx';
 import { TagPills } from '@/components/TagPills.tsx';
 import { useSessionTags } from '@/hooks/useTags.ts';
-import type { Session, SessionMeta } from '@/types.ts';
+import type { Session } from '@/types.ts';
 
 interface Props {
-  session: SessionMeta | null;
+  sessionId: string | null;
+  onSelectSession: (id: string) => void;
 }
 
-export function SessionDetail({ session }: Props) {
+export function SessionDetail({ sessionId, onSelectSession }: Props) {
   const [fullSession, setFullSession] = useState<Session | null>(null);
   const [activeTab, setActiveTab] = useState('conversation');
-  const { tags, addTag, removeTag } = useSessionTags(
-    session?.id ?? null,
-  );
+  const { tags, addTag, removeTag } = useSessionTags(sessionId);
 
   useEffect(() => {
-    if (!session) {
+    if (!sessionId) {
       setFullSession(null);
       return;
     }
-    void fetch(`/api/sessions/${session.id}`)
+    void fetch(`/api/sessions/${sessionId}`)
       .then(r => r.json())
       .then(setFullSession);
-  }, [session?.id]);
+  }, [sessionId]);
 
   useEffect(() => {
     setActiveTab('conversation');
-  }, [session?.id]);
+  }, [sessionId]);
 
   if (!fullSession) {
     return (
       <div className="flex-1 flex items-center justify-center text-sm
         text-gray-400">
-        {session ? 'Loading...' : 'Select a session to view details'}
+        {sessionId ? 'Loading...' : 'Select a session to view details'}
       </div>
     );
   }
@@ -92,6 +91,14 @@ export function SessionDetail({ session }: Props) {
   return (
     <div className="flex-1 flex flex-col overflow-hidden">
       <div className="px-4 py-3 border-b border-gray-200">
+        {fullSession.isSubagent && fullSession.parentSessionId && (
+          <button
+            onClick={() => onSelectSession(fullSession.parentSessionId!)}
+            className="text-[11px] text-indigo-600 hover:underline mb-1"
+          >
+            ← Back to parent session
+          </button>
+        )}
         <div className="text-sm font-semibold text-gray-900 truncate">
           {fullSession.title}
         </div>
@@ -154,6 +161,7 @@ export function SessionDetail({ session }: Props) {
             subagents={fullSession.subagents}
             agentToolCalls={agentToolCalls}
             sessionTitle={fullSession.title}
+            onSelectSubagent={onSelectSession}
           />
         )}
         {activeTab === 'raw-log' && (

@@ -5,9 +5,10 @@ interface Props {
   subagents: SubagentInfo[];
   agentToolCalls: ToolCallEntry[];
   sessionTitle: string;
+  onSelectSubagent: (sessionId: string) => void;
 }
 
-export function AgentTree({ subagents, agentToolCalls, sessionTitle }: Props) {
+export function AgentTree({ subagents, agentToolCalls, sessionTitle, onSelectSubagent }: Props) {
   if (subagents.length === 0 && agentToolCalls.length === 0) {
     return (
       <div className="px-4 py-8 text-center text-xs text-gray-400">
@@ -116,7 +117,11 @@ export function AgentTree({ subagents, agentToolCalls, sessionTitle }: Props) {
 
                   {/* Linked subagent info */}
                   {linked ? (
-                    <div className="mt-1.5 p-2 bg-gray-50 rounded border border-gray-100">
+                    <button
+                      onClick={() => onSelectSubagent(linked.sessionId)}
+                      className="mt-1.5 p-2 bg-gray-50 rounded border border-gray-100
+                        w-full text-left hover:bg-gray-100 hover:border-gray-200"
+                    >
                       <div className="flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
                         <span className="w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
                           S
@@ -131,7 +136,7 @@ export function AgentTree({ subagents, agentToolCalls, sessionTitle }: Props) {
                           <span>{formatDuration(linked.durationMs)}</span>
                         )}
                       </div>
-                    </div>
+                    </button>
                   ) : (
                     <div className="mt-1.5 text-[10px] text-gray-400 italic">
                       No subagent file found
@@ -152,7 +157,11 @@ export function AgentTree({ subagents, agentToolCalls, sessionTitle }: Props) {
                 <div className="w-2 h-2 rounded-full bg-emerald-400 shrink-0 my-0.5" />
                 <div className="w-px flex-1 bg-gray-300" />
               </div>
-              <div className="ml-2 flex-1 min-w-0 border border-gray-200 rounded-lg p-2.5">
+              <button
+                onClick={() => onSelectSubagent(sub.sessionId)}
+                className="ml-2 flex-1 min-w-0 border border-gray-200 rounded-lg p-2.5
+                  text-left hover:bg-gray-50 hover:border-gray-300"
+              >
                 <div className="flex items-center gap-2 flex-wrap text-[10px] text-gray-500">
                   <span className="w-4 h-4 rounded-full bg-emerald-500 text-white text-[9px] font-bold flex items-center justify-center shrink-0">
                     S
@@ -167,7 +176,7 @@ export function AgentTree({ subagents, agentToolCalls, sessionTitle }: Props) {
                     <span>{formatDuration(sub.durationMs)}</span>
                   )}
                 </div>
-              </div>
+              </button>
             </div>
           </div>
         ))}

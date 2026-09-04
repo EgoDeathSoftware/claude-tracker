@@ -6,7 +6,8 @@ import type { SessionRegistry, SessionFilter } from './registry.ts';
 import type { TrackerDB } from './db.ts';
 import type { SourceKind, SourceLocation } from './sources.ts';
 import { readRawLines, parseLines, PARSER_VERSION } from './parser.js';
-import { toBody } from './session-shape.js';
+import { toMeta } from './session-shape.js';
+import type { Session } from './types.js';
 import {
   readSettings,
   writeSettings,
@@ -180,7 +181,13 @@ export function buildApp(
       const parsed = parseLines(
         lines, fileStat, meta.filePath, meta.sourceId, meta.projectId,
       );
-      db.archive.replaceBody(id, toBody({ ...meta, ...parsed }), PARSER_VERSION);
+      // parsed.subagents is always empty — parseLines never links subagents,
+      // that's done separately by each source's live watcher — so keep the
+      // linkage this session already has instead of wiping it out.
+      const session: Session = { ...meta, ...parsed, subagents: meta.subagents };
+      db.archive.put(session, { parserVersion: PARSER_VERSION });
+      registry.updateSessionMeta(id, toMeta(session));
+      if (!session.isSubagent) db.indexSession(session);
       reparsed++;
     }
     return c.json({ reparsed });

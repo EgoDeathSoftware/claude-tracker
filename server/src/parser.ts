@@ -15,7 +15,7 @@ import type {
  * the version they were parsed with, so POST /api/archive/reparse can find
  * and re-derive the stale ones from their stored raw lines.
  */
-export const PARSER_VERSION = 1;
+export const PARSER_VERSION = 4;
 
 export interface ParsedFile {
   session: ParsedSession;
@@ -276,6 +276,14 @@ export function parseLines(
   let lastTimestamp = '';
   let lastType: 'user' | 'assistant' | null = null;
 
+  // A subagent's own dedicated transcript marks every one of its lines
+  // isSidechain: true (Claude Code reuses the same flag it uses for inline
+  // sidechain snippets embedded in a main session's file). Skipping
+  // isSidechain records is only correct when parsing a main session file;
+  // for a subagent's own file it would discard the entire conversation.
+  const parentSessionId = detectParentSessionId(filePath);
+  const isSubagentFile = parentSessionId !== undefined;
+
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i]!;
     const raw = parseJSON(line);
@@ -349,7 +357,7 @@ export function parseLines(
 
     if (raw.type === 'user') {
       const rec = raw as unknown as RawUserRecord;
-      if (rec.isSidechain || rec.isMeta) continue;
+      if ((rec.isSidechain && !isSubagentFile) || rec.isMeta) continue;
 
       if (!firstTimestamp) firstTimestamp = rec.timestamp;
       lastTimestamp = rec.timestamp;
@@ -357,7 +365,11 @@ export function parseLines(
 
       if (!slug && rec.slug) slug = rec.slug;
       if (!cwd && rec.cwd) cwd = rec.cwd;
-      if (rec.sessionId) sessionId = rec.sessionId;
+      // Every record in a subagent's own file carries its *parent's* session
+      // id here (Claude Code stamps the outer session context on sidechain
+      // records too), so trusting it would clobber the subagent's own,
+      // file-derived id and collide it with its parent.
+      if (!isSubagentFile && rec.sessionId) sessionId = rec.sessionId;
 
       const userText = extractUserText(rec.message.content);
       const hasRealText = userText.trim().length > 0;
@@ -396,7 +408,7 @@ export function parseLines(
       });
     } else {
       const rec = raw as unknown as RawAssistantRecord;
-      if (rec.isSidechain) continue;
+      if (rec.isSidechain && !isSubagentFile) continue;
 
       if (!firstTimestamp) firstTimestamp = rec.timestamp;
       lastTimestamp = rec.timestamp;
@@ -459,7 +471,6 @@ export function parseLines(
     ? new Date(lastTimestamp).getTime() - new Date(firstTimestamp).getTime()
     : 0;
 
-  const parentSessionId = detectParentSessionId(filePath);
   const projectId = deriveProjectKey(cwd, sourceId, dirName);
 
   return {

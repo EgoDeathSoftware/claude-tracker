@@ -249,9 +249,10 @@ export class SourceWatcher extends EventEmitter {
       parserVersion: PARSER_VERSION,
     });
 
-    if (session.isSubagent) {
-      this.linkSubagents();
-    }
+    // Re-parsing any session resets its own `subagents` field, so a parent
+    // that keeps updating after its subagent finishes needs relinking too —
+    // not just when the changed file is itself a subagent.
+    this.linkSubagents();
 
     this.emit(eventName, session);
   }

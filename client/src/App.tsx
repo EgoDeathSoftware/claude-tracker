@@ -89,9 +89,6 @@ export default function App() {
 
   useSSE(handleCreated, handleUpdated);
 
-  const selectedSession =
-    sessions.find(s => s.id === selectedSessionId) ?? null;
-
   const toggleCompare = (id: string) => {
     setCompareIds(prev => {
       if (prev.includes(id)) return prev.filter(x => x !== id);
@@ -162,7 +159,15 @@ export default function App() {
       )}
       {configOpen
         ? <ConfigPanel />
-        : <SessionDetail session={selectedSession} />
+        : (
+          <SessionDetail
+            sessionId={selectedSessionId}
+            onSelectSession={id => {
+              setSelectedSessionId(id);
+              setConfigOpen(false);
+            }}
+          />
+        )
       }
 
       <PromptLibrary

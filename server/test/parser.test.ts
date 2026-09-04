@@ -549,6 +549,39 @@ describe('subagent detection', () => {
       await rm(dir, { recursive: true });
     }
   });
+
+  // Claude Code marks every record in a subagent's own dedicated file
+  // isSidechain: true, and stamps the *parent's* session id (not the
+  // subagent's own file-derived id) onto rec.sessionId — both of these are
+  // true for ordinary inline sidechain snippets embedded in a main session's
+  // file too, which is what isSidechain/rec.sessionId handling is meant for.
+  it('parses a real subagent file whose records carry isSidechain and the parent sessionId', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'parser-test-'));
+    const parentDir = join(dir, 'parent-session-123', 'subagents');
+    await mkdir(parentDir, { recursive: true });
+    const file = join(parentDir, 'agent-abc.jsonl');
+    const content = [
+      '{"type":"user","uuid":"u1","parentUuid":null,"isSidechain":true,"sessionId":"parent-session-123",'
+      + '"timestamp":"2026-04-01T10:00:00.000Z","message":{"role":"user","content":"subagent task"}}',
+      '{"type":"assistant","uuid":"a1","parentUuid":"u1","isSidechain":true,"sessionId":"parent-session-123",'
+      + '"timestamp":"2026-04-01T10:00:01.000Z","message":{"role":"assistant","model":"claude-sonnet-4-6",'
+      + '"content":[{"type":"text","text":"done"}],"usage":{"input_tokens":5,"output_tokens":5}}}',
+    ].join('\n');
+    await writeFile(file, content);
+    try {
+      const session = await parseSession(file, 'test-source', 'proj-1');
+      // The subagent's own id must come from its filename, not collide with
+      // the parent session id embedded in its records.
+      expect(session.id).toBe('agent-abc');
+      expect(session.parentSessionId).toBe('parent-session-123');
+      expect(session.title).toBe('subagent task');
+      expect(session.turnCount).toBe(1);
+      expect(session.model).toBe('claude-sonnet-4-6');
+      expect(session.messages).toHaveLength(2);
+    } finally {
+      await rm(dir, { recursive: true });
+    }
+  });
 });
 
 describe('parseSessionDetailed', () => {

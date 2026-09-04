@@ -322,4 +322,9 @@ export class SessionRegistry extends EventEmitter {
   forgetSession(id: string): void {
     this.sessions.delete(id);
   }
+
+  /** Refresh a session's in-memory meta. Called by the reparse route only. */
+  updateSessionMeta(id: string, meta: SessionMeta): void {
+    this.sessions.set(id, meta);
+  }
 }
