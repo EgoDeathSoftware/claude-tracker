@@ -20,3 +20,6 @@ server/config/llm.json
 # Python toolchain artifacts (tools/sessionkit)
 __pycache__/
 *.pyc
+
+# Self-Evolution learned skills (personal, not committed)
+.self-evolution/
