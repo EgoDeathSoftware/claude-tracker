@@ -98,7 +98,7 @@ describe('OpenCodeWatcher', () => {
     }
   });
 
-  it('populates getAllSessions() from an initial scan without emitting events', async () => {
+  it('populates getAllMeta() from an initial scan without emitting events', async () => {
     const dataDir = makeTmp();
     cleanup.push(dataDir);
 
@@ -120,8 +120,8 @@ describe('OpenCodeWatcher', () => {
 
     await watcher.start();
 
-    expect(watcher.getAllSessions()).toHaveLength(1);
-    expect(watcher.getAllSessions()[0]!.id).toBe('session-1');
+    expect(watcher.getAllMeta()).toHaveLength(1);
+    expect(watcher.getAllMeta()[0]!.id).toBe('session-1');
     // The initial scan should not be treated as new arrivals
     expect(created).toHaveLength(0);
   });
@@ -159,7 +159,7 @@ describe('OpenCodeWatcher', () => {
 
     expect(created).toHaveLength(1);
     expect(created[0]!.id).toBe('session-2');
-    expect(watcher.getAllSessions()).toHaveLength(2);
+    expect(watcher.getAllMeta()).toHaveLength(2);
   });
 
   it('emits session-updated when pollOnce() finds a changed session', async () => {
@@ -198,8 +198,8 @@ describe('OpenCodeWatcher', () => {
     expect(created).toHaveLength(0);
     expect(updated).toHaveLength(1);
     expect(updated[0]!.title).toBe('Updated title');
-    expect(watcher.getAllSessions()).toHaveLength(1);
-    expect(watcher.getAllSessions()[0]!.title).toBe('Updated title');
+    expect(watcher.getAllMeta()).toHaveLength(1);
+    expect(watcher.getAllMeta()[0]!.title).toBe('Updated title');
   });
 
   it('does not re-emit when pollOnce() finds no changes', async () => {
@@ -261,16 +261,16 @@ describe('OpenCodeWatcher', () => {
 
     await watcher.pollOnce();
 
-    const parent = watcher.getAllSessions().find(s => s.id === 'parent-1')!;
+    const parent = watcher.getAllMeta().find(s => s.id === 'parent-1')!;
     expect(parent.subagents).toHaveLength(1);
     expect(parent.subagents[0]!.sessionId).toBe('child-1');
 
-    const child = watcher.getAllSessions().find(s => s.id === 'child-1')!;
+    const child = watcher.getAllMeta().find(s => s.id === 'child-1')!;
     expect(child.isSubagent).toBe(true);
     expect(child.parentSessionId).toBe('parent-1');
   });
 
-  it('getAllSessions() returns an empty array when the DB does not exist yet', async () => {
+  it('getAllMeta() returns an empty array when the DB does not exist yet', async () => {
     const dataDir = makeTmp();
     cleanup.push(dataDir);
 
@@ -278,7 +278,7 @@ describe('OpenCodeWatcher', () => {
     watchers.push(watcher);
     await watcher.start();
 
-    expect(watcher.getAllSessions()).toHaveLength(0);
+    expect(watcher.getAllMeta()).toHaveLength(0);
   });
 
   it('stop() clears the poll timer without throwing', async () => {
