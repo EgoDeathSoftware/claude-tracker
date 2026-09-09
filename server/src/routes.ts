@@ -44,7 +44,7 @@ export function buildApp(
     s => s.kind === 'opencode' && s.configPath,
   );
 
-  app.use('*', cors({ origin: 'http://localhost:5173' }));
+  app.use('*', cors({ origin: 'http://localhost:47170' }));
 
   // --- Config: opencode (read-only) - independent of the primarySource gate
   // below, since Claude Code config and opencode config are separate
