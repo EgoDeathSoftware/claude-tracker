@@ -4,6 +4,7 @@ import { writeFile, mkdtemp, rm, mkdir, appendFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { SourceWatcher } from '../src/source-watcher.ts';
 import { TrackerDB } from '../src/db.ts';
+import { Limiter } from '../src/limiter.ts';
 import type { Source } from '../src/sources.ts';
 
 function src(id: string, path: string): Source {
@@ -66,6 +67,24 @@ async function makeClaudeDir(specs: SeedSpec[]): Promise<string> {
   return dir;
 }
 
+/** Records the highest observed concurrency so a test can assert the cap. */
+class CountingLimiter extends Limiter {
+  peak = 0;
+  private inFlight = 0;
+
+  override async run<T>(task: () => Promise<T>): Promise<T> {
+    return super.run(async () => {
+      this.inFlight++;
+      this.peak = Math.max(this.peak, this.inFlight);
+      try {
+        return await task();
+      } finally {
+        this.inFlight--;
+      }
+    });
+  }
+}
+
 async function appendRecord(
   dir: string, project: string, session: string, record: unknown,
 ): Promise<void> {
@@ -114,8 +133,8 @@ describe('SourceWatcher subagent support', () => {
     await watcher.start();
 
     try {
-      // Subagents should be filtered from getAllSessions
-      const sessions = watcher.getAllSessions().filter(s => !s.isSubagent);
+      // Subagents should be filtered from getAllMeta()
+      const sessions = watcher.getAllMeta().filter(s => !s.isSubagent);
       expect(sessions).toHaveLength(1);
       expect(sessions[0]!.isSubagent).toBe(false);
 
@@ -127,7 +146,7 @@ describe('SourceWatcher subagent support', () => {
       expect(parent.subagents[0]!.turnCount).toBe(1);
 
       // Subagent should exist in the session map
-      const sub = watcher.getAllSessions().find(
+      const sub = watcher.getAllMeta().find(
         s => s.id === parent.subagents[0]!.sessionId,
       );
       expect(sub).toBeDefined();
@@ -136,7 +155,7 @@ describe('SourceWatcher subagent support', () => {
 
       // Project aggregation is tested at the registry level in registry.test.ts;
       // here we just verify subagents are in the raw session map.
-      const all = watcher.getAllSessions();
+      const all = watcher.getAllMeta();
       expect(all.filter(s => !s.isSubagent)).toHaveLength(1);
       expect(all.filter(s => s.isSubagent)).toHaveLength(1);
     } finally {
@@ -167,7 +186,7 @@ describe('SourceWatcher subagent support', () => {
 
     try {
       // Both should have projectId = 'test-source:-my-project'
-      const all = watcher.getAllSessions();
+      const all = watcher.getAllMeta();
       const nonSub = all.filter(s => !s.isSubagent);
       expect(nonSub).toHaveLength(1);
       expect(nonSub[0]!.projectId).toBe('test-source:-my-project');
@@ -201,7 +220,7 @@ describe('SourceWatcher options', () => {
     await watcher.start();
     await watcher.stop();
 
-    const sessions = watcher.getAllSessions();
+    const sessions = watcher.getAllMeta();
     expect(sessions).toHaveLength(1);
     expect(sessions[0]?.cwd).toBe('/host/demo');
     expect(sessions[0]?.projectId).toBe('demo');
@@ -340,7 +359,7 @@ describe('SourceWatcher startup fingerprint skip', () => {
     const second = new SourceWatcher(src('wsl', dir), db, { watch: false });
     await second.start();
 
-    expect(second.getAllSessions().map(s => s.id)).toContain('a1');
+    expect(second.getAllMeta().map(s => s.id)).toContain('a1');
     expect(db.archive.fileFingerprint('a1')).toEqual(before);
     await second.stop();
   });
@@ -380,11 +399,11 @@ describe('SourceWatcher startup fingerprint skip', () => {
       watch: false, rescan: true,
     });
     await second.start();
-    expect(second.getAllSessions().map(s => s.id)).toContain('a1');
+    expect(second.getAllMeta().map(s => s.id)).toContain('a1');
     await second.stop();
   });
 
-  it('a skipped session is still served in memory from the archive', async () => {
+  it('a skipped session is still served from the archive, body included', async () => {
     const dir = await makeClaudeDir([
       { project: '-workspace', session: 'a1', cwd: '/workspace' },
     ]);
@@ -395,9 +414,45 @@ describe('SourceWatcher startup fingerprint skip', () => {
 
     const second = new SourceWatcher(src('wsl', dir), db, { watch: false });
     await second.start();
-    const session = second.getAllSessions().find(s => s.id === 'a1')!;
-    expect(session.messages.length).toBeGreaterThan(0);
-    expect(session.archived).toBe(false);
+    const meta = second.getAllMeta().find(s => s.id === 'a1')!;
+    expect(meta.archived).toBe(false);
+    // The watcher keeps metadata only; the body still resolves on demand.
+    expect(db.archive.getBody('a1')!.messages.length).toBeGreaterThan(0);
     await second.stop();
+  });
+
+  it('retains no message bodies in memory after a scan', async () => {
+    const dir = await makeClaudeDir([
+      { project: '-workspace', session: 'a1', cwd: '/workspace' },
+    ]);
+    const db = new TrackerDB(':memory:');
+    const watcher = new SourceWatcher(src('wsl', dir), db, { watch: false });
+    await watcher.start();
+
+    const meta = watcher.getAllMeta().find(s => s.id === 'a1')!;
+    for (const key of ['messages', 'toolCalls', 'fileChanges', 'logEntries',
+      'hookEvents', 'permissionEvents', 'recaps']) {
+      expect(meta).not.toHaveProperty(key);
+    }
+    await watcher.stop();
+  });
+
+  it('caps how many transcripts it parses at once', async () => {
+    const dir = await makeClaudeDir(
+      Array.from({ length: 12 }, (_, i) => ({
+        project: '-workspace', session: `s${i}`, cwd: '/workspace',
+      })),
+    );
+
+    const limiter = new CountingLimiter(3);
+    const watcher = new SourceWatcher(src('wsl', dir), undefined, {
+      watch: false, limiter,
+    });
+    await watcher.start();
+    await watcher.stop();
+
+    expect(watcher.getAllMeta()).toHaveLength(12);
+    expect(limiter.peak).toBeGreaterThan(1);
+    expect(limiter.peak).toBeLessThanOrEqual(3);
   });
 });

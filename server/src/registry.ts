@@ -5,9 +5,11 @@ import { OpenCodeWatcher } from './opencode-watcher.js';
 import { StoreSetWatcher } from './store-set-watcher.js';
 import type { StoreSetWatcherOptions } from './store-set-watcher.js';
 import { applyOrigin } from './store-origin.js';
-import { toMeta } from './session-shape.js';
+import { Limiter } from './limiter.js';
 import type { TrackerDB } from './db.js';
-import type { ParsedSession, Session, SessionBody, SessionMeta, Project } from './types.js';
+import type {
+  ParsedSession, Session, SessionBody, SessionMeta, Project,
+} from './types.js';
 import type { Source, SourceKind, SourceLocation } from './sources.js';
 import { displayNameFromCwd } from './project-key.js';
 
@@ -29,7 +31,7 @@ export interface RegistryOptions extends StoreSetWatcherOptions {
 interface AgentWatcher extends EventEmitter {
   start(): Promise<void>;
   stop(): Promise<void>;
-  getAllSessions(): Session[];
+  getAllMeta(): SessionMeta[];
 }
 
 function createWatcher(
@@ -50,6 +52,9 @@ export class SessionRegistry extends EventEmitter {
   private storeSets: StoreSetWatcher[] = [];
   private sessions = new Map<string, SessionMeta>();
   private db: TrackerDB | null;
+  // One cap shared by every watcher: 20 sources each scanning their whole
+  // tree at once is what turns a large startup into a heap spike.
+  private readonly parseLimiter = new Limiter();
 
   constructor(
     private sources: Source[],
@@ -61,13 +66,13 @@ export class SessionRegistry extends EventEmitter {
   }
 
   private subscribe(watcher: AgentWatcher): void {
-    watcher.on('session-created', (s: Session) => {
-      this.ingest(s);
-      this.emit('session-created', s);
+    watcher.on('session-created', (meta: SessionMeta) => {
+      this.ingest(meta);
+      this.emit('session-created', meta);
     });
-    watcher.on('session-updated', (s: Session) => {
-      this.ingest(s);
-      this.emit('session-updated', s);
+    watcher.on('session-updated', (meta: SessionMeta) => {
+      this.ingest(meta);
+      this.emit('session-updated', meta);
     });
   }
 
@@ -79,6 +84,7 @@ export class SessionRegistry extends EventEmitter {
         ? (s: ParsedSession) => applyOrigin(s, origin)
         : undefined,
       rescan: this.storeSetOptions?.rescan,
+      limiter: this.parseLimiter,
     };
   }
 
@@ -115,8 +121,8 @@ export class SessionRegistry extends EventEmitter {
     });
 
     for (const [, w] of entries) {
-      for (const session of w.getAllSessions()) {
-        this.ingest(session);
+      for (const meta of w.getAllMeta()) {
+        this.ingest(meta);
       }
     }
 
@@ -172,7 +178,7 @@ export class SessionRegistry extends EventEmitter {
     } catch (err) {
       console.warn(`[registry] source "${source.id}" failed to start:`, err);
     }
-    for (const session of watcher.getAllSessions()) this.ingest(session);
+    for (const meta of watcher.getAllMeta()) this.ingest(meta);
     this.subscribe(watcher);
     this.emit('sources-changed');
   }
@@ -209,7 +215,7 @@ export class SessionRegistry extends EventEmitter {
     this.emit('sources-changed');
   }
 
-  private ingest(session: Session): void {
+  private ingest(session: SessionMeta): void {
     const existing = this.sessions.get(session.id);
     if (existing && !existing.archived && existing.sourceId !== session.sourceId) {
       const incomingNewer
@@ -227,7 +233,7 @@ export class SessionRegistry extends EventEmitter {
         + `(replacing ${existing.sourceId} with ${session.sourceId})`,
       );
     }
-    this.sessions.set(session.id, toMeta(session));
+    this.sessions.set(session.id, session);
   }
 
   /**

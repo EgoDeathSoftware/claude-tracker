@@ -53,7 +53,7 @@ cp .env.example .env
 docker compose up -d
 
 # 3. Open
-open http://localhost:5173
+open http://localhost:47170
 ```
 
 First build takes ~1-2 minutes. Subsequent starts are instant.

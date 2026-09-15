@@ -3,10 +3,11 @@ import { readdir, stat } from 'node:fs/promises';
 import { join, basename, dirname, relative, sep } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { parseSessionDetailed, PARSER_VERSION } from './parser.js';
-import { decorateSession } from './session-shape.js';
+import { decorateSession, toMeta } from './session-shape.js';
+import { Limiter } from './limiter.js';
 import type { TrackerDB } from './db.js';
 import type { Source } from './sources.js';
-import type { ParsedSession, Session } from './types.js';
+import type { ParsedSession, SessionMeta, ToolCallEntry } from './types.js';
 
 export interface SourceWatcherOptions {
   /** Start a filesystem watcher for live updates. Defaults to true. */
@@ -15,16 +16,49 @@ export interface SourceWatcherOptions {
   transformSession?: ((session: ParsedSession) => ParsedSession) | undefined;
   /** Re-parse every file even when its fingerprint is unchanged. Default false. */
   rescan?: boolean | undefined;
+  /** Shared parse-concurrency cap. Defaults to a private one per watcher. */
+  limiter?: Limiter | undefined;
+}
+
+/** The `Agent` tool-call input a parent uses to describe one subagent. */
+interface AgentCallInput {
+  description?: string | undefined;
+  subagent_type?: string | undefined;
+}
+
+/**
+ * What a watcher retains per session: list-view metadata plus the only body
+ * data subagent linking needs. Bodies stay in the archive and are loaded on
+ * demand — holding them here pins the whole corpus in the heap for the life
+ * of the process.
+ */
+interface WatchedSession {
+  meta: SessionMeta;
+  agentCalls: AgentCallInput[];
+}
+
+function agentCallsOf(toolCalls: ToolCallEntry[]): AgentCallInput[] {
+  const calls: AgentCallInput[] = [];
+  for (const call of toolCalls) {
+    if (call.toolName !== 'Agent') continue;
+    const input = call.input as AgentCallInput | undefined;
+    calls.push({
+      description: input?.description,
+      subagent_type: input?.subagent_type,
+    });
+  }
+  return calls;
 }
 
 export class SourceWatcher extends EventEmitter {
-  private sessions = new Map<string, Session>();
+  private sessions = new Map<string, WatchedSession>();
   private projectsDir: string;
   private watcher: ReturnType<typeof watch> | null = null;
   private db: TrackerDB | null;
   private readonly watchEnabled: boolean;
   private readonly transformSession: (session: ParsedSession) => ParsedSession;
   private readonly rescan: boolean;
+  private readonly limiter: Limiter;
   public readonly sourceId: string;
 
   constructor(
@@ -39,6 +73,7 @@ export class SourceWatcher extends EventEmitter {
     this.watchEnabled = options?.watch ?? true;
     this.transformSession = options?.transformSession ?? (s => s);
     this.rescan = options?.rescan ?? false;
+    this.limiter = options?.limiter ?? new Limiter();
   }
 
   async start(): Promise<void> {
@@ -53,15 +88,15 @@ export class SourceWatcher extends EventEmitter {
     return firstSegment ?? basename(dirname(filePath));
   }
 
-  private async scanExisting(): Promise<void> {
+  private async collectFiles(): Promise<{ path: string; dirName: string }[]> {
     let projectDirs: string[];
     try {
       projectDirs = await readdir(this.projectsDir);
     } catch {
-      return;
+      return [];
     }
 
-    const parses: Promise<void>[] = [];
+    const files: { path: string; dirName: string }[] = [];
 
     for (const projectDir of projectDirs) {
       const projectPath = join(this.projectsDir, projectDir);
@@ -73,7 +108,7 @@ export class SourceWatcher extends EventEmitter {
         const entryPath = join(projectPath, entry);
 
         if (entry.endsWith('.jsonl')) {
-          parses.push(this.parseAndStore(entryPath, projectDir));
+          files.push({ path: entryPath, dirName: projectDir });
           continue;
         }
 
@@ -83,17 +118,26 @@ export class SourceWatcher extends EventEmitter {
         );
         for (const subFile of subFiles) {
           if (!subFile.endsWith('.jsonl')) continue;
-          parses.push(
-            this.parseAndStore(
-              join(subagentsDir, subFile),
-              projectDir,
-            ),
-          );
+          files.push({
+            path: join(subagentsDir, subFile),
+            dirName: projectDir,
+          });
         }
       }
     }
 
-    await Promise.all(parses);
+    return files;
+  }
+
+  private async scanExisting(): Promise<void> {
+    const files = await this.collectFiles();
+    // Every task is created up front but each waits on the shared limiter, so
+    // only a handful of transcripts are ever parsed — and resident — at once.
+    await Promise.all(
+      files.map(file =>
+        this.limiter.run(() => this.parseAndStore(file.path, file.dirName)),
+      ),
+    );
   }
 
   private async parseAndStore(
@@ -111,7 +155,12 @@ export class SourceWatcher extends EventEmitter {
           const body = this.db.archive.getBody(sessionId);
           const meta = this.db.archive.loadSummary(sessionId);
           if (body && meta) {
-            this.sessions.set(sessionId, { ...meta, ...body, archived: false });
+            // The body is read only to recover the parent's Agent calls for
+            // linking; it goes out of scope here rather than being retained.
+            this.sessions.set(sessionId, {
+              meta: { ...meta, archived: false },
+              agentCalls: agentCallsOf(body.toolCalls),
+            });
             return;
           }
         }
@@ -121,7 +170,10 @@ export class SourceWatcher extends EventEmitter {
       const session = decorateSession(
         this.transformSession(parsed.session), this.source,
       );
-      this.sessions.set(session.id, session);
+      this.sessions.set(session.id, {
+        meta: toMeta(session),
+        agentCalls: agentCallsOf(session.toolCalls),
+      });
       this.db?.archive.put(session, {
         lines: parsed.lines,
         fileSize: parsed.size,
@@ -140,30 +192,23 @@ export class SourceWatcher extends EventEmitter {
   }
 
   private linkSubagents(): void {
-    const childMap = new Map<string, Session[]>();
-    for (const session of this.sessions.values()) {
-      if (!session.isSubagent || !session.parentSessionId) continue;
-      let children = childMap.get(session.parentSessionId);
+    const childMap = new Map<string, SessionMeta[]>();
+    for (const { meta } of this.sessions.values()) {
+      if (!meta.isSubagent || !meta.parentSessionId) continue;
+      let children = childMap.get(meta.parentSessionId);
       if (!children) {
         children = [];
-        childMap.set(session.parentSessionId, children);
+        childMap.set(meta.parentSessionId, children);
       }
-      children.push(session);
+      children.push(meta);
     }
 
     for (const [parentId, children] of childMap) {
       const parent = this.sessions.get(parentId);
       if (!parent) continue;
 
-      const agentToolCalls = parent.toolCalls.filter(
-        tc => tc.toolName === 'Agent',
-      );
-
-      parent.subagents = children.map((child, i) => {
-        const agentCall = agentToolCalls[i];
-        const input = agentCall?.input as
-          | { description?: string; subagent_type?: string }
-          | undefined;
+      parent.meta.subagents = children.map((child, i) => {
+        const input = parent.agentCalls[i];
 
         return {
           sessionId: child.id,
@@ -229,7 +274,8 @@ export class SourceWatcher extends EventEmitter {
     eventName: 'session-created' | 'session-updated',
   ): Promise<void> {
     const dirName = this.dirNameFromPath(filePath);
-    const parsed = await parseSessionDetailed(filePath, this.sourceId, dirName)
+    const parsed = await this.limiter
+      .run(() => parseSessionDetailed(filePath, this.sourceId, dirName))
       .catch(err => {
         console.error(
           `[source-watcher:${this.sourceId}] Failed to parse ${filePath}:`,
@@ -241,7 +287,11 @@ export class SourceWatcher extends EventEmitter {
     const session = decorateSession(
       this.transformSession(parsed.session), this.source,
     );
-    this.sessions.set(session.id, session);
+    const entry: WatchedSession = {
+      meta: toMeta(session),
+      agentCalls: agentCallsOf(session.toolCalls),
+    };
+    this.sessions.set(session.id, entry);
     this.db?.archive.put(session, {
       lines: parsed.lines,
       fileSize: parsed.size,
@@ -254,10 +304,12 @@ export class SourceWatcher extends EventEmitter {
     // not just when the changed file is itself a subagent.
     this.linkSubagents();
 
-    this.emit(eventName, session);
+    // Emitted after linking so the payload carries the freshly linked
+    // `subagents`; `entry.meta` is the object linkSubagents mutates in place.
+    this.emit(eventName, entry.meta);
   }
 
-  getAllSessions(): Session[] {
-    return [...this.sessions.values()];
+  getAllMeta(): SessionMeta[] {
+    return [...this.sessions.values()].map(entry => entry.meta);
   }
 }

@@ -13,6 +13,18 @@ const LOCATION_LABELS: Record<SourceLocation, string> = {
   container: 'Containers',
 };
 
+function formatLastActivity(iso: string): string {
+  const date = new Date(iso);
+  if (Number.isNaN(date.getTime())) return '';
+  const now = new Date();
+  const sameYear = date.getFullYear() === now.getFullYear();
+  return date.toLocaleDateString(undefined, {
+    month: 'short',
+    day: 'numeric',
+    year: sameYear ? undefined : 'numeric',
+  });
+}
+
 interface Props {
   projects: Project[];
   selectedId: string | null;
@@ -124,7 +136,10 @@ export function ProjectList({
               selectedId === p.id ? 'bg-white border-l-2 border-l-indigo-500' : 'hover:bg-gray-100'
             }`}
           >
-            <div className="text-xs font-medium text-gray-800 truncate">{p.name}</div>
+            <div className="flex items-baseline justify-between gap-2">
+              <div className="text-xs font-medium text-gray-800 truncate">{p.name}</div>
+              <div className="text-[10px] text-gray-400 shrink-0">{formatLastActivity(p.lastActivityAt)}</div>
+            </div>
             <div className="text-[11px] text-gray-400 mt-0.5 flex items-center justify-between">
               <div className="flex items-center gap-1.5">
                 {p.liveCount > 0 && (

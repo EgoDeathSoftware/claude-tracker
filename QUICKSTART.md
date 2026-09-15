@@ -29,10 +29,10 @@ Source files (`client/src/`, `server/src/`) are volume-mounted, so changes hot-r
 
 ## Ports
 
-| Service | URL                    |
-|---------|------------------------|
-| Client  | http://localhost:5173  |
-| Server  | http://localhost:3001  |
+| Service | URL                     |
+|---------|-------------------------|
+| Client  | http://localhost:47170  |
+| Server  | http://localhost:47171  |
 
 ## Other Commands
 

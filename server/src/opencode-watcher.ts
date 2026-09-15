@@ -2,15 +2,15 @@ import { stat } from 'node:fs/promises';
 import { join } from 'node:path';
 import { EventEmitter } from 'node:events';
 import { listOpenCodeSessions } from './opencode-parser.js';
-import { decorateSession } from './session-shape.js';
+import { decorateSession, toMeta } from './session-shape.js';
 import type { TrackerDB } from './db.js';
 import type { Source } from './sources.js';
-import type { Session } from './types.js';
+import type { Session, SessionMeta } from './types.js';
 
 const POLL_INTERVAL_MS = 1000;
 
 export class OpenCodeWatcher extends EventEmitter {
-  private sessions = new Map<string, Session>();
+  private sessions = new Map<string, SessionMeta>();
   private readonly dbPath: string;
   private readonly walPath: string;
   private db: TrackerDB | null;
@@ -69,9 +69,14 @@ export class OpenCodeWatcher extends EventEmitter {
   }
 
   private applyScan(scanned: Session[], emitEvents: boolean): void {
+    const pending: { event: 'session-created' | 'session-updated'; meta: SessionMeta }[] = [];
+
     for (const session of scanned) {
       const existing = this.sessions.get(session.id);
-      this.sessions.set(session.id, session);
+      // Only the metadata is retained; the body goes to the archive and is
+      // loaded back on demand when a detail view asks for it.
+      const meta = toMeta(session);
+      this.sessions.set(session.id, meta);
 
       // No raw lines exist for opencode: its sessions come from opencode's
       // own SQLite tables, not a JSONL file.
@@ -84,13 +89,17 @@ export class OpenCodeWatcher extends EventEmitter {
       if (!emitEvents) continue;
 
       if (!existing) {
-        this.emit('session-created', session);
-      } else if (existing.lastActivityAt !== session.lastActivityAt) {
-        this.emit('session-updated', session);
+        pending.push({ event: 'session-created', meta });
+      } else if (existing.lastActivityAt !== meta.lastActivityAt) {
+        pending.push({ event: 'session-updated', meta });
       }
     }
 
+    // Linking mutates each parent's `subagents` in place, so it has to run
+    // before the payloads go out.
     this.linkSubagents();
+
+    for (const { event, meta } of pending) this.emit(event, meta);
   }
 
   private async mtimeOf(path: string): Promise<number> {
@@ -125,7 +134,7 @@ export class OpenCodeWatcher extends EventEmitter {
   // resolved into parentSessionId by the parser), unlike Claude Code's
   // positional Agent-tool-call heuristic in SourceWatcher.linkSubagents().
   private linkSubagents(): void {
-    const childMap = new Map<string, Session[]>();
+    const childMap = new Map<string, SessionMeta[]>();
     for (const session of this.sessions.values()) {
       if (!session.isSubagent || !session.parentSessionId) continue;
       let children = childMap.get(session.parentSessionId);
@@ -152,7 +161,7 @@ export class OpenCodeWatcher extends EventEmitter {
     }
   }
 
-  getAllSessions(): Session[] {
+  getAllMeta(): SessionMeta[] {
     return [...this.sessions.values()];
   }
 }

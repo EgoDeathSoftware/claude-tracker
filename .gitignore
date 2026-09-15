@@ -10,6 +10,7 @@ dist/
 .playwright-mcp/
 .vscode/
 
+.claude/autoharness/*
 
 # Multi-source tracker config
 server/config/sources.json
