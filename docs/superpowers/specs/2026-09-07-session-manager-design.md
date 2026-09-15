@@ -92,9 +92,17 @@ It differs from `sk tail --all` in three ways, each of which the goal requires:
 
 ### JSON shape
 
+Two **flat** tables, not one nested tree. `render.Report` renders a document as named tables
+of flat rows and has no nested-object mode; adding one would mean reworking its budget
+accounting, which drops rows per table. Threads therefore carry `project_key` and the
+consumer joins on it — a two-line join in both consumers, against a renderer change that
+would touch every existing command.
+
 ```json
 {
-  "window": {"since": "7d", "from": "2026-08-31T…", "to": "2026-09-07T…"},
+  "since": "7d",
+  "window_from": "2026-08-31T21:00:00Z",
+  "generated_at": "2026-09-07T21:00:00Z",
   "projects": [
     {
       "project_key": "claude-tracker",
@@ -102,38 +110,41 @@ It differs from `sk tail --all` in three ways, each of which the goal requires:
       "open_sessions": 2,
       "last_active": "2026-09-08T01:37:55.970Z",
       "cost_usd": 3.12,
-      "score": 78,
-      "threads": [
-        {
-          "sid": "949d169f",
-          "label": "Agent analyzer for Claude sessions",
-          "ended_at": "2026-09-08T01:37:55.970Z",
-          "end_state": "interrupted-tool",
-          "tail_signal": "next_step_stated",
-          "bucket": "resume",
-          "score": 78,
-          "live": false,
-          "parent_sid": null,
-          "agent_type": null,
-          "turns": 3,
-          "cost_usd": 1.28,
-          "cwd": "/home/user/Projects/claude-tracker",
-          "last_user": "…",
-          "last_assistant": "…",
-          "next_step": "I'll wire the board route into App.tsx next.",
-          "in_flight_tool": "Bash: pnpm test",
-          "uncommitted": ["server/src/board.ts"],
-          "resume": "claude --resume 949d169f"
-        }
-      ]
+      "score": 78
     }
   ],
-  "omitted": 0
+  "threads": [
+    {
+      "project_key": "claude-tracker",
+      "sid": "949d169f",
+      "label": "Agent analyzer for Claude sessions",
+      "ended_at": "2026-09-08T01:37:55.970Z",
+      "end_state": "interrupted-tool",
+      "tail_signal": "next_step_stated",
+      "bucket": "resume",
+      "score": 78,
+      "live": false,
+      "parent_sid": "",
+      "agent_type": "",
+      "turns": 3,
+      "cost_usd": 1.28,
+      "cwd": "/home/user/Projects/claude-tracker",
+      "last_user": "…",
+      "last_assistant": "…",
+      "next_step": "I'll wire the board route into App.tsx next.",
+      "in_flight_tool": "Bash: pnpm test",
+      "uncommitted": ["server/src/board.ts"],
+      "resume": "claude --resume 949d169f"
+    }
+  ],
+  "omitted": {"threads": 0}
 }
 ```
 
-`omitted` is non-zero whenever `--budget-kb` cut rows, and the table renderer prints
-`… N more row(s) omitted`. Truncation is never silent.
+`omitted` is populated per table by `Report` whenever `--budget-kb` cut rows, and the text
+renderer prints `… N more row(s) omitted`. Truncation is never silent. Absent string fields
+are `""` rather than `null`, matching every existing sessionkit row; `uncommitted` is the one
+field where `null` is meaningful, and it is a list, not a string.
 
 ### `sessionkit/board.py`
 
