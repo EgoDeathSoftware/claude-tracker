@@ -2,6 +2,7 @@ import { EventEmitter } from 'node:events';
 import { SourceWatcher } from './source-watcher.js';
 import type { SourceWatcherOptions } from './source-watcher.js';
 import { OpenCodeWatcher } from './opencode-watcher.js';
+import { RemoteWatcher } from './remote-watcher.js';
 import { StoreSetWatcher } from './store-set-watcher.js';
 import type { StoreSetWatcherOptions } from './store-set-watcher.js';
 import { applyOrigin } from './store-origin.js';
@@ -39,6 +40,9 @@ function createWatcher(
   db?: TrackerDB,
   options?: SourceWatcherOptions,
 ): AgentWatcher {
+  if (source.location === 'remote') {
+    return new RemoteWatcher(source, db);
+  }
   switch (source.kind) {
     case 'claude-code':
       return new SourceWatcher(source, db, options);
@@ -322,6 +326,14 @@ export class SessionRegistry extends EventEmitter {
 
   getSources(): Source[] {
     return this.sources;
+  }
+
+  /** Live RemoteWatcher for a connected remote source, for ExporterListener to
+   * feed protocol events into. Undefined for any other source or before it's
+   * connected. */
+  getRemoteWatcher(sourceId: string): RemoteWatcher | undefined {
+    const watcher = this.watchers.get(sourceId);
+    return watcher instanceof RemoteWatcher ? watcher : undefined;
   }
 
   /** Drop a session from the in-memory map. Called by the delete route only. */

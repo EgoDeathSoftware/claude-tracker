@@ -251,4 +251,12 @@ describe('layout and location', () => {
     expect(sources[0]?.layout).toBe('single');
     expect(sources[0]?.location).toBe('host');
   });
+
+  it('accepts "remote" as a valid SourceLocation at the type level', () => {
+    const source: import('../src/sources.ts').Source = {
+      id: 'vps1', name: 'vps1', path: 'remote:vps1',
+      kind: 'claude-code', layout: 'single', location: 'remote',
+    };
+    expect(source.location).toBe('remote');
+  });
 });

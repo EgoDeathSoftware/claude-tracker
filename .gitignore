@@ -15,6 +15,9 @@ dist/
 # Multi-source tracker config
 server/config/sources.json
 
+# Remote exporter CA private key
+server/config/exporter-ca/
+
 # LLM endpoint config (may contain an API key)
 server/config/llm.json
 

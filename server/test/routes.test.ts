@@ -1,4 +1,5 @@
-import { describe, it, expect, afterEach } from 'vitest';
+import 'reflect-metadata';
+import { describe, it, expect, afterEach, beforeEach } from 'vitest';
 import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -9,6 +10,9 @@ import { TrackerDB } from '../src/db.js';
 import type { Source } from '../src/sources.js';
 import { archivedSession } from './fixtures/session.js';
 import { PARSER_VERSION } from '../src/parser.js';
+import { ExporterPki } from '../src/exporter/pki.js';
+import { ExporterListener } from '../src/exporter/listener.js';
+import type { ExporterRouteDeps } from '../src/exporter-routes.js';
 
 function makeUserLine(uuid: string, content: string, ts: string, cwd?: string): string {
   const rec: Record<string, unknown> = {
@@ -481,5 +485,135 @@ describe('archive routes', () => {
     expect(await (await app.request('/api/archive/reparse', { method: 'POST' })).json())
       .toEqual({ reparsed: 0 });
     await registry.stop();
+  });
+});
+
+describe('/api/sessions/:id/raw for a remote session', () => {
+  it('reads from the archive, since a remote session has no local file', async () => {
+    // Deliberately not archived: a currently-connected remote source has a
+    // live RemoteWatcher, so this exercises the new location==='remote'
+    // branch specifically rather than the pre-existing archived-session
+    // branch (which reads from the same place and would mask a missing
+    // remote branch by accident).
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    await registry.addSource({
+      id: 'vps1', name: 'vps1', path: 'remote:vps1',
+      kind: 'claude-code', layout: 'single', location: 'remote',
+    });
+    const watcher = registry.getRemoteWatcher('vps1')!;
+    watcher.handleFileSnapshot('demo/remote-sess.jsonl', 10, 1000, [
+      JSON.stringify({
+        type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+        timestamp: '2026-01-01T00:00:00.000Z', cwd: '/home/vps-user/projects/demo',
+        sessionId: 'remote-sess', message: { role: 'user', content: 'hi from the vps' },
+      }),
+    ]);
+    const app = buildApp(registry, db, '/tmp/llm.json');
+
+    const res = await app.request('/api/sessions/remote-sess/raw');
+    expect(res.status).toBe(200);
+    const body = await res.json() as { total: number };
+    expect(body.total).toBe(1);
+    await registry.stop();
+  });
+});
+
+describe('/api/exporters (disabled)', () => {
+  it('503s every exporter route when no exporter deps are configured', async () => {
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    const app = buildApp(registry, db, '/tmp/llm.json');
+    const res = await app.request('/api/exporters');
+    expect(res.status).toBe(503);
+    await registry.stop();
+  });
+});
+
+describe('/api/exporters (enabled)', () => {
+  let caDir: string;
+  let db: TrackerDB;
+  let registry: SessionRegistry;
+  let exporterDeps: ExporterRouteDeps;
+
+  beforeEach(async () => {
+    caDir = await mkdtemp(join(tmpdir(), 'routes-exporter-ca-'));
+    db = new TrackerDB(':memory:');
+    registry = new SessionRegistry([], db);
+    await registry.start();
+    const pki = await ExporterPki.loadOrCreate(caDir);
+    const listener = new ExporterListener({ port: 0, pki, enrollStore: db.enroll, registry, db });
+    exporterDeps = { enrollStore: db.enroll, pki, listener, publicAddr: 'tracker.example:8444' };
+  });
+
+  afterEach(async () => {
+    await registry.stop();
+    await rm(caDir, { recursive: true, force: true });
+  });
+
+  it('POST /api/exporters/enroll mints a token and returns install commands', async () => {
+    const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
+    const res = await app.request('/api/exporters/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'vps1' }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json() as { installCommand: string; installCommandPowershell: string };
+    expect(body.installCommand).toContain('--token');
+    expect(body.installCommand).toContain(exporterDeps.publicAddr);
+  });
+
+  it('rejects a missing name', async () => {
+    const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
+    const res = await app.request('/api/exporters/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({}),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('rejects a name with characters outside [a-zA-Z0-9_-]', async () => {
+    const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
+    const res = await app.request('/api/exporters/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'wsl/../etc' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('namespaces the sourceId so an enrolled exporter cannot collide with a configured source', async () => {
+    const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
+    const res = await app.request('/api/exporters/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'wsl' }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json() as { installCommand: string };
+    const token = /--token (\S+)/.exec(body.installCommand)?.[1];
+    expect(token).toBeDefined();
+    const consumed = exporterDeps.enrollStore.consumeToken(token!);
+    expect(consumed?.sourceId).toBe('remote:wsl');
+  });
+
+  it('GET /api/exporters lists issued certs', async () => {
+    exporterDeps.enrollStore.recordCert('aa', 'vps1', 'vps1', '2027-01-01T00:00:00.000Z');
+    const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
+    const res = await app.request('/api/exporters');
+    const body = await res.json() as { serial: string }[];
+    expect(body.some(c => c.serial === 'aa')).toBe(true);
+  });
+
+  it('DELETE /api/exporters/:sourceId revokes the cert and force-disconnects', async () => {
+    exporterDeps.enrollStore.recordCert('aa', 'vps1', 'vps1', '2027-01-01T00:00:00.000Z');
+    const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
+    const res = await app.request('/api/exporters/vps1', { method: 'DELETE' });
+    expect(res.status).toBe(200);
+    expect(exporterDeps.enrollStore.isRevoked('aa')).toBe(true);
   });
 });

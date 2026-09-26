@@ -6,13 +6,17 @@
     "dev": "node --watch dist/index.js",
     "build": "tsc",
     "predev": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "exporter:enroll": "node dist/exporter/enroll-cli.js"
   },
   "dependencies": {
     "@hono/node-server": "1.14.1",
+    "@peculiar/webcrypto": "1.7.1",
+    "@peculiar/x509": "2.1.0",
     "better-sqlite3": "12.9.0",
     "chokidar": "4.0.3",
-    "hono": "4.7.7"
+    "hono": "4.7.7",
+    "reflect-metadata": "0.2.2"
   },
   "devDependencies": {
     "@types/better-sqlite3": "7.6.13",

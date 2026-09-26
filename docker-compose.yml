@@ -6,6 +6,7 @@ services:
     ports:
       - "47170:5173"
       - "47171:3001"
+      - "${EXPORTER_LISTEN_PORT:-8444}:${EXPORTER_LISTEN_PORT:-8444}"
     volumes:
       - ./client/src:/app/client/src
       - ./client/index.html:/app/client/index.html
@@ -25,6 +26,9 @@ services:
       - STORE_POLL_MS=${STORE_POLL_MS:-}
       - ARCHIVE_FLUSH_MS=${ARCHIVE_FLUSH_MS:-}
       - ARCHIVE_RESCAN=${ARCHIVE_RESCAN:-}
+      - EXPORTER_ENABLED=${EXPORTER_ENABLED:-}
+      - EXPORTER_LISTEN_PORT=${EXPORTER_LISTEN_PORT:-8444}
+      - EXPORTER_PUBLIC_ADDR=${EXPORTER_PUBLIC_ADDR:-}
     restart: unless-stopped
 
 volumes:

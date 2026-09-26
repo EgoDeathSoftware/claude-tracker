@@ -24,11 +24,14 @@ import { readLlmConfig, writeLlmConfig } from './llm-config.js';
 import type { LlmConfig } from './llm-config.js';
 import { listModels, testConnection, generateSummary } from './llm.js';
 import { readOpenCodeConfig, listOpenCodeAgents } from './opencode-config.js';
+import { registerExporterRoutes } from './exporter-routes.js';
+import type { ExporterRouteDeps } from './exporter-routes.js';
 
 export function buildApp(
   registry: SessionRegistry,
   db: TrackerDB,
   llmConfigPath: string,
+  exporterDeps?: ExporterRouteDeps,
 ): Hono {
   const app = new Hono();
   const sources = registry.getSources();
@@ -138,6 +141,12 @@ export function buildApp(
       return c.json(db.archive.getRawLines(session.id, offset, limit));
     }
 
+    // A remote session never had a local file to tail - the sync protocol has
+    // already written every line straight into the archive in real time.
+    if (session.sourceLocation === 'remote') {
+      return c.json(db.archive.getRawLines(session.id, offset, limit));
+    }
+
     return c.json(await readRawLines(session.filePath, offset, limit));
   });
 
@@ -192,6 +201,15 @@ export function buildApp(
     }
     return c.json({ reparsed });
   });
+
+  // --- Exporters ---
+
+  if (exporterDeps) {
+    registerExporterRoutes(app, exporterDeps);
+  } else {
+    app.all('/api/exporters/*', c => c.json({ error: 'remote exporters not enabled' }, 503));
+    app.get('/api/exporters', c => c.json({ error: 'remote exporters not enabled' }, 503));
+  }
 
   // --- Tags ---
 
