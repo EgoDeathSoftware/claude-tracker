@@ -2,7 +2,7 @@ import { readFile, stat } from 'node:fs/promises';
 import type { StoreOrigin } from './store-origin.js';
 
 export type SourceKind = 'claude-code' | 'opencode';
-export type SourceLocation = 'host' | 'container';
+export type SourceLocation = 'host' | 'container' | 'remote';
 export type SourceLayout = 'single' | 'store-set';
 
 export interface Source {
