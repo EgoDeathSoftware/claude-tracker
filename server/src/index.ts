@@ -48,7 +48,7 @@ let exporterDeps: ExporterRouteDeps | undefined;
 if (exporterEnabled) {
   const exporterCaDir = process.env['EXPORTER_CA_DIR']
     ?? join(dataDir, 'exporter-ca');
-  const exporterPort = Number(process.env['EXPORTER_LISTEN_PORT'] ?? 8444);
+  const exporterPort = parseOptionalNumberEnv('EXPORTER_LISTEN_PORT') ?? 8444;
   const publicAddr = process.env['EXPORTER_PUBLIC_ADDR'];
   if (!publicAddr) {
     throw new Error('EXPORTER_PUBLIC_ADDR must be set when EXPORTER_ENABLED=1');
