@@ -215,6 +215,26 @@ describe('ExporterListener', () => {
     client.close();
   });
 
+  it('rejects a /sync connection whose cert chains to the CA but was never recorded', async () => {
+    // Simulates a database reset or a stale/reused CA: the handshake itself
+    // succeeds (the cert genuinely chains to the CA), but the server must
+    // still reject it since it has no record of ever having issued it.
+    const pki = await ExporterPki.loadOrCreate(caDir);
+    const { keys, csrPem } = await makeClientKeyAndCsr();
+    const signed = await pki.signCsr(csrPem, 365); // signed directly, never recorded in EnrollStore
+    const keyPem = await exportPrivateKeyPem(keys.privateKey);
+    const client = http2.connect(`https://localhost:${PORT}`, {
+      ca: pki.caCertPem, cert: signed.certPem, key: keyPem, rejectUnauthorized: true,
+      checkServerIdentity: () => undefined,
+    });
+    const stream = client.request({ ':path': '/sync', ':method': 'POST' });
+    const status = await new Promise<number>(resolve => {
+      stream.on('response', headers => resolve(headers[':status'] as number));
+    });
+    expect(status).toBe(403);
+    client.close();
+  });
+
   it('calls registry.removeSource when a synced connection closes', async () => {
     const { certPem, keyPem, caCertPem } = await enroll();
     const client = http2.connect(`https://localhost:${PORT}`, {
