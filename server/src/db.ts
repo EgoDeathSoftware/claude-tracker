@@ -132,6 +132,28 @@ export class TrackerDB {
         content     TEXT NOT NULL,
         PRIMARY KEY (session_id, line_number)
       ) WITHOUT ROWID;
+
+      CREATE TABLE IF NOT EXISTS exporter_tokens (
+        token_hash    TEXT PRIMARY KEY,
+        source_id     TEXT NOT NULL,
+        source_name   TEXT NOT NULL,
+        dir_override  TEXT,
+        created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at    TEXT NOT NULL,
+        used_at       TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS exporter_certs (
+        serial        TEXT PRIMARY KEY,
+        source_id     TEXT NOT NULL,
+        source_name   TEXT NOT NULL,
+        issued_at     TEXT NOT NULL DEFAULT (datetime('now')),
+        expires_at    TEXT NOT NULL,
+        revoked_at    TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_exporter_certs_source
+        ON exporter_certs(source_id);
     `);
   }
 

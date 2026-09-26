@@ -94,3 +94,15 @@ describe('TrackerDB.removeSession', () => {
     expect(() => db.removeSession('never-indexed')).not.toThrow();
   });
 });
+
+describe('exporter tables', () => {
+  it('creates exporter_tokens and exporter_certs tables', () => {
+    const db = new TrackerDB(':memory:');
+    expect(() =>
+      db['db'].prepare('SELECT * FROM exporter_tokens LIMIT 1').all(),
+    ).not.toThrow();
+    expect(() =>
+      db['db'].prepare('SELECT * FROM exporter_certs LIMIT 1').all(),
+    ).not.toThrow();
+  });
+});
