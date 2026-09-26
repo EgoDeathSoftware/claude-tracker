@@ -132,13 +132,14 @@ export class ExporterPki {
    */
   async signCsr(csrPem: string, validityDays: number): Promise<SignedCert> {
     const csr = new x509.Pkcs10CertificateRequest(csrPem);
-    const serial = Buffer.from(
+    // Only used as generator input, not stored - see the serial re-read below.
+    const randomSerialSeed = Buffer.from(
       crypto.getRandomValues(new Uint8Array(16)),
     ).toString('hex');
     const notAfter = new Date(Date.now() + validityDays * 86_400_000);
 
     const cert = await x509.X509CertificateGenerator.create({
-      serialNumber: serial,
+      serialNumber: randomSerialSeed,
       subject: csr.subject,
       issuer: this.caCert.subject,
       notBefore: new Date(),
@@ -156,7 +157,15 @@ export class ExporterPki {
 
     return {
       certPem: cert.toString('pem'),
-      serial,
+      // Read back from the generated cert rather than trusting
+      // randomSerialSeed verbatim: X.509's ASN.1 INTEGER encoding strips a
+      // leading zero byte (about 1-in-256 of our 16 random bytes), and
+      // cert.serialNumber already reflects that normalized encoding - the
+      // same one node:tls's getPeerCertificate().serialNumber will report
+      // from a live connection. Storing the raw seed instead would make
+      // EnrollStore.certRecordBySerial's lookup miss forever for any cert
+      // whose random serial happened to start with 0x00.
+      serial: cert.serialNumber.toLowerCase(),
       expiresAt: notAfter.toISOString(),
     };
   }

@@ -72,4 +72,30 @@ describe('ExporterPki#signCsr', () => {
     const b = await pki.signCsr(await makeCsrPem(), 365);
     expect(a.serial).not.toBe(b.serial);
   });
+
+  it('records the serial in the same format node:tls will report from a live connection, even when the random serial has a leading zero byte', async () => {
+    // A raw 16-byte random hex serial has a 1/256 chance per byte of a
+    // leading 0x00 byte. X.509's ASN.1 INTEGER encoding (and therefore what
+    // node:crypto's X509Certificate - the same OpenSSL binding
+    // TLSSocket.getPeerCertificate() uses - reports back) strips that
+    // leading zero byte, so a serial recorded verbatim from the pre-cert
+    // random bytes silently drifts from what a live /sync connection will
+    // ever present, and EnrollStore.certRecordBySerial's lookup misses
+    // forever. Loop until we hit that case (~1/256 per try) instead of
+    // relying on a fixed input, since the random bytes aren't exposed for
+    // injection.
+    const pki = await ExporterPki.loadOrCreate(caDir);
+    const csrPem = await makeCsrPem();
+    const { X509Certificate: NodeX509Certificate } = await import('node:crypto');
+    let sawLeadingZeroCase = false;
+    for (let i = 0; i < 2000; i++) {
+      const signed = await pki.signCsr(csrPem, 365);
+      const nodeReportedSerial = new NodeX509Certificate(signed.certPem).serialNumber
+        .replace(/:/g, '')
+        .toLowerCase();
+      expect(signed.serial).toBe(nodeReportedSerial);
+      if (nodeReportedSerial.length < 32) sawLeadingZeroCase = true;
+    }
+    expect(sawLeadingZeroCase).toBe(true);
+  });
 });
