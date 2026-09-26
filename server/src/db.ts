@@ -4,6 +4,7 @@ import { dirname } from 'node:path';
 import type { Session, AiSummary } from './types.ts';
 import { ArchiveStore } from './archive-store.js';
 import type { ArchiveStoreOptions } from './archive-store.js';
+import { EnrollStore } from './exporter/enroll-store.js';
 
 const SCHEMA_VERSION = 3;
 
@@ -32,6 +33,8 @@ export class TrackerDB {
   private db: Database.Database;
   /** Durable transcript archive. Shares this connection; see archive-store.ts. */
   readonly archive: ArchiveStore;
+  /** Exporter enrollment tokens and cert revocation. Shares this connection. */
+  readonly enroll: EnrollStore;
 
   constructor(dbPath: string, archiveOptions?: ArchiveStoreOptions) {
     mkdirSync(dirname(dbPath), { recursive: true });
@@ -43,6 +46,7 @@ export class TrackerDB {
     // subsequent indexSession() calls write into the up-to-date table.
     this.maybeRebuildFts();
     this.archive = new ArchiveStore(this.db, archiveOptions);
+    this.enroll = new EnrollStore(this.db);
   }
 
   private migrate(): void {

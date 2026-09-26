@@ -6,7 +6,8 @@
     "dev": "node --watch dist/index.js",
     "build": "tsc",
     "predev": "tsc",
-    "test": "vitest run"
+    "test": "vitest run",
+    "exporter:enroll": "node dist/exporter/enroll-cli.js"
   },
   "dependencies": {
     "@hono/node-server": "1.14.1",
