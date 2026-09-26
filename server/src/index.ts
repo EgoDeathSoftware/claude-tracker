@@ -6,6 +6,9 @@ import { TrackerDB } from './db.js';
 import { buildApp } from './routes.js';
 import { startAutoSummarizePoller } from './auto-summarize.js';
 import { parseOptionalNumberEnv } from './env-config.js';
+import { ExporterPki } from './exporter/pki.js';
+import { ExporterListener } from './exporter/listener.js';
+import type { ExporterRouteDeps } from './exporter-routes.js';
 
 const sourcesConfigPath = process.env['SOURCES_CONFIG']
   ?? join(process.cwd(), 'config', 'sources.json');
@@ -39,7 +42,28 @@ const registry = new SessionRegistry(
 await registry.start();
 startAutoSummarizePoller(registry, db, llmConfigPath);
 
-const app = buildApp(registry, db, llmConfigPath);
+const exporterEnabled = process.env['EXPORTER_ENABLED'] === '1';
+let exporterDeps: ExporterRouteDeps | undefined;
+
+if (exporterEnabled) {
+  const exporterCaDir = process.env['EXPORTER_CA_DIR']
+    ?? join(dataDir, 'exporter-ca');
+  const exporterPort = Number(process.env['EXPORTER_LISTEN_PORT'] ?? 8444);
+  const publicAddr = process.env['EXPORTER_PUBLIC_ADDR'];
+  if (!publicAddr) {
+    throw new Error('EXPORTER_PUBLIC_ADDR must be set when EXPORTER_ENABLED=1');
+  }
+
+  const pki = await ExporterPki.loadOrCreate(exporterCaDir);
+  const listener = new ExporterListener({
+    port: exporterPort, pki, enrollStore: db.enroll, registry, db,
+  });
+  await listener.start();
+  exporterDeps = { enrollStore: db.enroll, pki, listener, publicAddr };
+  console.log(`Exporter listener running on port ${exporterPort}`);
+}
+
+const app = buildApp(registry, db, llmConfigPath, exporterDeps);
 serve({ fetch: app.fetch, port }, () => {
   console.log(`Claude Tracker server running on http://localhost:${port}`);
   console.log(`Sources:`);
