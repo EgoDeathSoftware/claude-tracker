@@ -119,6 +119,46 @@ describe('ExporterListener', () => {
     void keys;
   });
 
+  it('rejects a malformed CSR without crashing, and does not burn the token', async () => {
+    const token = enrollStore.issueToken('vps1', 'vps1', undefined, 15 * 60_000);
+    const caCertPem = (await ExporterPki.loadOrCreate(caDir)).caCertPem;
+    const client = http2.connect(`https://localhost:${PORT}`, { ca: caCertPem, rejectUnauthorized: true, checkServerIdentity: () => undefined });
+
+    const req = client.request({ ':path': '/enroll', ':method': 'POST' });
+    req.end(JSON.stringify({ token, csr: 'not a real csr' }));
+    const status = await new Promise<number>(resolve => {
+      req.on('response', headers => resolve(headers[':status'] as number));
+    });
+    expect(status).toBe(400);
+
+    // The token must still be usable on the same connection - a bad CSR
+    // shouldn't waste a valid token, and the connection/session must still
+    // be alive after handling a malformed request (proving it didn't crash
+    // the listener).
+    const { csrPem } = await makeClientKeyAndCsr();
+    const retryReq = client.request({ ':path': '/enroll', ':method': 'POST' });
+    retryReq.end(JSON.stringify({ token, csr: csrPem }));
+    const retryStatus = await new Promise<number>(resolve => {
+      retryReq.on('response', headers => resolve(headers[':status'] as number));
+    });
+    expect(retryStatus).toBe(200);
+    client.close();
+  });
+
+  it('rejects an oversized /enroll body', async () => {
+    const token = enrollStore.issueToken('vps1', 'vps1', undefined, 15 * 60_000);
+    const caCertPem = (await ExporterPki.loadOrCreate(caDir)).caCertPem;
+    const client = http2.connect(`https://localhost:${PORT}`, { ca: caCertPem, rejectUnauthorized: true, checkServerIdentity: () => undefined });
+    const req = client.request({ ':path': '/enroll', ':method': 'POST' });
+    const huge = 'x'.repeat(1024 * 1024); // 1MB, well past any reasonable CSR+token size
+    req.end(JSON.stringify({ token, csr: huge }));
+    const status = await new Promise<number>(resolve => {
+      req.on('response', headers => resolve(headers[':status'] as number));
+    });
+    expect(status).toBe(413);
+    client.close();
+  });
+
   it('accepts a /sync connection presenting the enrolled cert and feeds FileList into the RemoteWatcher', async () => {
     const { certPem, keyPem, caCertPem } = await enroll();
     const client = http2.connect(`https://localhost:${PORT}`, {
@@ -186,5 +226,48 @@ describe('ExporterListener', () => {
     client.close();
     await new Promise(resolve => setTimeout(resolve, 50));
     expect(registry.getSources().find(s => s.id === 'vps1')).toBeUndefined();
+  });
+
+  it('a reconnecting exporter does not have its new connection torn down by the old one closing', async () => {
+    const { certPem, keyPem, caCertPem } = await enroll();
+    const clientA = http2.connect(`https://localhost:${PORT}`, {
+      ca: caCertPem, cert: certPem, key: keyPem, rejectUnauthorized: true, checkServerIdentity: () => undefined,
+    });
+    const streamA = clientA.request({ ':path': '/sync', ':method': 'POST' });
+    await new Promise<void>(resolve => streamA.on('response', () => resolve()));
+    await new Promise(resolve => setTimeout(resolve, 20)); // let A's addSource land
+
+    // B reconnects for the same source before A's connection has been torn down.
+    const clientB = http2.connect(`https://localhost:${PORT}`, {
+      ca: caCertPem, cert: certPem, key: keyPem, rejectUnauthorized: true, checkServerIdentity: () => undefined,
+    });
+    const streamB = clientB.request({ ':path': '/sync', ':method': 'POST' });
+    await new Promise<void>(resolve => streamB.on('response', () => resolve()));
+    await new Promise(resolve => setTimeout(resolve, 100));
+
+    // A's close (arriving late, as if from a network drop that only just resolved) must not
+    // tear down B's now-current registration.
+    clientA.destroy();
+    await new Promise(resolve => setTimeout(resolve, 500));
+
+    expect(registry.getSources().find(s => s.id === 'vps1')).toBeDefined();
+    expect(registry.getRemoteWatcher('vps1')).toBeDefined();
+
+    streamB.write(encodeFrame({
+      type: 'FileList',
+      files: [{ relPath: 'demo/sess1.jsonl', size: 10, mtimeUnixMs: 1 }],
+    }));
+    const requestSnapshot = new Promise<unknown>(resolve => {
+      let buf = '';
+      streamB.on('data', (c: Buffer) => {
+        buf += c.toString();
+        const idx = buf.indexOf('\n');
+        if (idx !== -1) resolve(JSON.parse(buf.slice(0, idx)));
+      });
+    });
+    expect(await requestSnapshot).toEqual({ type: 'RequestSnapshot', relPath: 'demo/sess1.jsonl' });
+
+    streamB.close();
+    clientB.close();
   });
 });

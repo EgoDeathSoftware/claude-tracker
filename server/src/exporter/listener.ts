@@ -1,9 +1,11 @@
+import 'reflect-metadata';
 import { createSecureServer } from 'node:http2';
 import type { Http2SecureServer, ServerHttp2Stream, IncomingHttpHeaders } from 'node:http2';
 import type { TLSSocket } from 'node:tls';
 import type { ServerHttp2Session } from 'node:http2';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import * as x509 from '@peculiar/x509';
 import type { ExporterPki } from './pki.js';
 import type { EnrollStore } from './enroll-store.js';
 import { FrameDecoder, encodeFrame, parseExporterMessage } from './protocol.js';
@@ -21,10 +23,31 @@ export interface ExporterListenerOptions {
   binariesDir?: string | undefined;
 }
 
-function readBody(stream: ServerHttp2Stream): Promise<string> {
+const MAX_ENROLL_BODY_BYTES = 16 * 1024;
+
+class BodyTooLargeError extends Error {}
+
+/**
+ * /enroll is reachable before any authentication (that's the whole point of
+ * bootstrap enrollment), so its body must be bounded - an unauthenticated
+ * caller must not be able to make the server buffer arbitrary amounts of
+ * memory.
+ */
+function readBody(stream: ServerHttp2Stream, maxBytes = MAX_ENROLL_BODY_BYTES): Promise<string> {
   return new Promise((resolve, reject) => {
     const chunks: Buffer[] = [];
-    stream.on('data', (c: Buffer) => chunks.push(c));
+    let total = 0;
+    let rejected = false;
+    stream.on('data', (c: Buffer) => {
+      if (rejected) return;
+      total += c.length;
+      if (total > maxBytes) {
+        rejected = true;
+        reject(new BodyTooLargeError('body exceeds maximum size'));
+        return;
+      }
+      chunks.push(c);
+    });
     stream.on('end', () => resolve(Buffer.concat(chunks).toString('utf-8')));
     stream.on('error', reject);
   });
@@ -38,6 +61,11 @@ function sendJson(stream: ServerHttp2Stream, status: number, body: unknown): voi
 export class ExporterListener {
   private server: Http2SecureServer;
   private streams = new Map<string, ServerHttp2Stream>();
+  // Chains each sourceId's addSource/removeSource calls so a reconnect's
+  // addSource and the superseded connection's removeSource can never run
+  // concurrently, honoring registry.addSource's documented "callers must
+  // serialize add/remove per source id" contract.
+  private registryQueues = new Map<string, Promise<unknown>>();
   // Every open TLS session, not just ones that reached a synced source - an
   // /enroll bootstrap connection or a rejected /sync attempt can otherwise
   // keep server.close()'s callback from ever firing, since Node only calls
@@ -102,6 +130,14 @@ export class ExporterListener {
     this.streams.get(sourceId)?.destroy();
   }
 
+  /** Runs `fn` after every previously enqueued call for this sourceId has settled. */
+  private enqueue(sourceId: string, fn: () => Promise<void>): Promise<void> {
+    const prior = this.registryQueues.get(sourceId) ?? Promise.resolve();
+    const next = prior.then(fn, fn);
+    this.registryQueues.set(sourceId, next.catch(() => undefined));
+    return next;
+  }
+
   private handleStream(stream: ServerHttp2Stream, headers: IncomingHttpHeaders): void {
     const path = headers[':path'];
     if (path === '/enroll') { void this.handleEnroll(stream); return; }
@@ -146,30 +182,69 @@ export class ExporterListener {
     }
   }
 
+  /**
+   * Every branch below is defensive: /enroll is reachable before any
+   * authentication, so a malformed or hostile payload must produce an HTTP
+   * response, never an uncaught throw - `signCsr`/x509 parsing throws
+   * synchronously on garbage input, and this method previously had no
+   * top-level catch, which turned that into an unhandled rejection capable
+   * of taking down the whole process for every connected exporter, not just
+   * the offending caller.
+   */
   private async handleEnroll(stream: ServerHttp2Stream): Promise<void> {
-    let payload: { token?: unknown; csr?: unknown };
     try {
-      payload = JSON.parse(await readBody(stream)) as { token?: unknown; csr?: unknown };
-    } catch {
-      sendJson(stream, 400, { error: 'malformed JSON body' });
-      return;
+      let body: string;
+      try {
+        body = await readBody(stream);
+      } catch (err) {
+        if (err instanceof BodyTooLargeError) {
+          sendJson(stream, 413, { error: 'body too large' });
+        } else {
+          sendJson(stream, 400, { error: 'failed to read body' });
+        }
+        return;
+      }
+
+      let payload: { token?: unknown; csr?: unknown };
+      try {
+        payload = JSON.parse(body) as { token?: unknown; csr?: unknown };
+      } catch {
+        sendJson(stream, 400, { error: 'malformed JSON body' });
+        return;
+      }
+      if (typeof payload.token !== 'string' || typeof payload.csr !== 'string') {
+        sendJson(stream, 400, { error: 'token and csr are required' });
+        return;
+      }
+
+      // Validate the CSR (parses, and verifies proof-of-possession of the
+      // private key) before consuming the token, so a malformed or invalid
+      // CSR never wastes a valid single-use token.
+      let csr: x509.Pkcs10CertificateRequest;
+      try {
+        csr = new x509.Pkcs10CertificateRequest(payload.csr);
+        if (!(await csr.verify())) throw new Error('CSR signature does not verify');
+      } catch {
+        sendJson(stream, 400, { error: 'invalid CSR' });
+        return;
+      }
+
+      const consumed = this.opts.enrollStore.consumeToken(payload.token);
+      if (!consumed) {
+        sendJson(stream, 403, { error: 'invalid, expired, or already-used token' });
+        return;
+      }
+      const signed = await this.opts.pki.signCsr(payload.csr, 365);
+      this.opts.enrollStore.recordCert(signed.serial, consumed.sourceId, consumed.sourceName, signed.expiresAt);
+      sendJson(stream, 200, {
+        cert: signed.certPem,
+        caCert: this.opts.pki.caCertPem,
+        sourceId: consumed.sourceId,
+      });
+    } catch (err) {
+      console.error('[exporter-listener] unexpected error handling /enroll:', err);
+      if (!stream.destroyed) sendJson(stream, 500, { error: 'internal error' });
     }
-    if (typeof payload.token !== 'string' || typeof payload.csr !== 'string') {
-      sendJson(stream, 400, { error: 'token and csr are required' });
-      return;
-    }
-    const consumed = this.opts.enrollStore.consumeToken(payload.token);
-    if (!consumed) {
-      sendJson(stream, 403, { error: 'invalid, expired, or already-used token' });
-      return;
-    }
-    const signed = await this.opts.pki.signCsr(payload.csr, 365);
-    this.opts.enrollStore.recordCert(signed.serial, consumed.sourceId, consumed.sourceName, signed.expiresAt);
-    sendJson(stream, 200, {
-      cert: signed.certPem,
-      caCert: this.opts.pki.caCertPem,
-      sourceId: consumed.sourceId,
-    });
   }
 
   private handleSync(stream: ServerHttp2Stream): void {
@@ -192,6 +267,13 @@ export class ExporterListener {
 
     const sourceId = record.sourceId;
     stream.respond({ ':status': 200 });
+    // A reconnecting exporter's new stream supersedes any old one still on
+    // record for this sourceId - destroy it now rather than leaving two
+    // live streams for one source, so its eventual 'close' cleanup (which
+    // may arrive well after this point, e.g. a network drop that only
+    // resolves later) has something to no-op against instead of tearing
+    // down the connection that just replaced it.
+    this.streams.get(sourceId)?.destroy();
     this.streams.set(sourceId, stream);
     void this.attachSync(stream, sourceId, record.sourceName);
   }
@@ -199,10 +281,10 @@ export class ExporterListener {
   private async attachSync(
     stream: ServerHttp2Stream, sourceId: string, sourceName: string,
   ): Promise<void> {
-    await this.opts.registry.addSource({
+    await this.enqueue(sourceId, () => this.opts.registry.addSource({
       id: sourceId, name: sourceName, path: `remote:${sourceId}`,
       kind: 'claude-code', layout: 'single', location: 'remote',
-    });
+    }));
     const watcher = this.opts.registry.getRemoteWatcher(sourceId);
     if (!watcher) {
       console.error(`[exporter-listener] no RemoteWatcher registered for ${sourceId} right after addSource`);
@@ -216,15 +298,29 @@ export class ExporterListener {
       for (const raw of decoder.push(chunk)) {
         const msg = parseExporterMessage(raw);
         if (!msg) {
-          console.warn(`[exporter-listener:${sourceId}] dropping malformed frame`);
+          console.warn(`[exporter-listener:${sourceId}] dropping malformed frame (${chunk.length} bytes)`);
           continue;
         }
-        this.dispatch(sourceId, watcher, stream, msg);
+        try {
+          this.dispatch(sourceId, watcher, stream, msg);
+        } catch (err) {
+          // A frame that parses as valid NDJSON but carries a transcript
+          // line the parser can't handle must not take down the listener
+          // (or any other connected exporter) - log without the content,
+          // which may be sensitive transcript data, and keep going.
+          console.warn(`[exporter-listener:${sourceId}] failed to process ${msg.type} frame:`, err);
+        }
       }
     });
     const cleanup = (): void => {
+      // The stream that's closing may have already been superseded by a
+      // newer connection for the same sourceId (handleSync destroys the
+      // old stream on reconnect, but its 'close' event can still arrive
+      // after the new one is already registered) - only tear down the
+      // registration if this is still the stream on record for it.
+      if (this.streams.get(sourceId) !== stream) return;
       this.streams.delete(sourceId);
-      void this.opts.registry.removeSource(sourceId);
+      void this.enqueue(sourceId, () => this.opts.registry.removeSource(sourceId));
     };
     stream.on('close', cleanup);
     stream.on('error', err => {
