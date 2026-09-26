@@ -94,6 +94,42 @@ describe('RemoteWatcher', () => {
     expect(db.archive.hasSession('sess1')).toBe(true);
   });
 
+  it('does not throw when a transcript line parses as JSON but has an invalid shape', () => {
+    const events: string[] = [];
+    watcher.on('session-created', () => events.push('created'));
+    const badLine = JSON.stringify({
+      type: 'user', uuid: 'u1', parentUuid: null, isSidechain: false,
+      timestamp: '2026-01-01T00:00:00.000Z', cwd: '/home/vps-user/projects/demo',
+      sessionId: 'sess1', message: null,
+    });
+    expect(() => watcher.handleFileSnapshot('demo/sess1.jsonl', 10, 1000, [badLine])).not.toThrow();
+    expect(events).toEqual([]);
+    expect(watcher.getAllMeta()).toEqual([]);
+  });
+
+  it('refuses to overwrite a session already archived by a different source', () => {
+    const other = new RemoteWatcher(
+      {
+        id: 'vps-other', name: 'vps-other', path: 'remote:vps-other',
+        kind: 'claude-code', layout: 'single', location: 'remote',
+      },
+      db,
+    );
+    other.handleFileSnapshot('demo/shared.jsonl', 10, 1000, [
+      sessionLine({ sessionId: 'shared', uuid: 'legit-u1' }),
+    ]);
+    expect(db.archive.loadSummary('shared')?.sourceId).toBe('vps-other');
+
+    watcher.handleFileSnapshot('demo/shared.jsonl', 20, 2000, [
+      sessionLine({ sessionId: 'shared', uuid: 'attacker-u1' }),
+    ]);
+
+    expect(db.archive.loadSummary('shared')?.sourceId).toBe('vps-other');
+    expect(db.archive.rawLineStrings('shared')).toEqual([
+      sessionLine({ sessionId: 'shared', uuid: 'legit-u1' }),
+    ]);
+  });
+
   it('links a subagent transcript to its parent', () => {
     watcher.handleFileSnapshot('demo/parent.jsonl', 50, 1000, [
       JSON.stringify({

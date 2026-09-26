@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import {
   encodeFrame, parseExporterMessage, FrameDecoder,
 } from '../../src/exporter/protocol.ts';
@@ -32,6 +32,18 @@ describe('FrameDecoder', () => {
     const decoder = new FrameDecoder();
     const frames = decoder.push('not json\n{"type":"FileRemoved","relPath":"a"}\n');
     expect(frames).toEqual([{ type: 'FileRemoved', relPath: 'a' }]);
+  });
+
+  it('does not log the malformed line content, since it may be sensitive transcript data', () => {
+    const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const decoder = new FrameDecoder();
+      decoder.push('not json but contains a SECRET_API_KEY=abc123\n');
+      const logged = warnSpy.mock.calls.map(call => call.join(' ')).join(' ');
+      expect(logged).not.toContain('SECRET_API_KEY');
+    } finally {
+      warnSpy.mockRestore();
+    }
   });
 
   it('ignores blank lines', () => {

@@ -4,7 +4,7 @@ import { parseLines, PARSER_VERSION } from './parser.js';
 import { decorateSession, toMeta } from './session-shape.js';
 import type { TrackerDB } from './db.js';
 import type { Source } from './sources.js';
-import type { ParsedSession, SessionMeta, ToolCallEntry } from './types.js';
+import type { ParsedSession, Session, SessionMeta, ToolCallEntry } from './types.js';
 import type { FileListEntry } from './exporter/protocol.js';
 
 interface AgentCallInput {
@@ -80,9 +80,12 @@ export class RemoteWatcher extends EventEmitter {
     const sessionId = basename(relPath, '.jsonl');
     const existing = this.db?.archive.rawLineStrings(sessionId) ?? [];
     if (fromLine !== existing.length) {
+      // relPath is exporter-controlled; JSON.stringify it rather than
+      // interpolating raw so an embedded newline/control character can't
+      // forge extra log lines.
       console.warn(
         `[remote-watcher:${this.sourceId}] out-of-order AppendLines for `
-        + `${relPath} (fromLine=${fromLine}, archived=${existing.length}); `
+        + `${JSON.stringify(relPath)} (fromLine=${fromLine}, archived=${existing.length}); `
         + 'ignoring - the next reconcile will self-heal',
       );
       return;
@@ -118,10 +121,41 @@ export class RemoteWatcher extends EventEmitter {
     const dirName = dirNameOf(relPath);
     const syntheticPath = `remote:${this.sourceId}/${relPath}`;
     const fileStat = { mtimeMs: fileMtimeMs ?? Date.now(), birthtimeMs: Date.now() };
-    const parsed: ParsedSession = parseLines(
-      lines, fileStat, syntheticPath, this.sourceId, dirName,
-    );
-    const session = decorateSession(parsed, this.source);
+
+    let session: Session;
+    try {
+      // A frame that parses as valid NDJSON can still carry a transcript
+      // line the parser can't handle (a null/malformed message field, for
+      // instance) - that must not crash the listener or corrupt this
+      // watcher's other sessions, matching what SourceWatcher already does
+      // for a bad local file. Logged without the line content, which is
+      // untrusted transcript data that may itself be sensitive.
+      const parsed: ParsedSession = parseLines(
+        lines, fileStat, syntheticPath, this.sourceId, dirName,
+      );
+      session = decorateSession(parsed, this.source);
+    } catch (err) {
+      console.warn(
+        `[remote-watcher:${this.sourceId}] failed to parse ${JSON.stringify(relPath)}:`, err,
+      );
+      return;
+    }
+
+    // A session id can come from the exporter's filename or from a
+    // `sessionId` field inside its own JSONL content - either way it's
+    // attacker/bug-controlled by whichever exporter is sending it. Refuse to
+    // overwrite a session that's already on record for a *different* source,
+    // so one exporter (malicious or just misconfigured) can't stomp another
+    // exporter's - or a host's - archived transcript by reusing its id.
+    const owner = this.db?.archive.loadSummary(session.id)?.sourceId;
+    if (owner !== undefined && owner !== this.sourceId) {
+      console.warn(
+        `[remote-watcher:${this.sourceId}] refusing to overwrite session `
+        + `${session.id}, owned by source ${owner}`,
+      );
+      return;
+    }
+
     const existed = this.sessions.has(session.id);
 
     this.sessions.set(session.id, {

@@ -132,7 +132,9 @@ export class FrameDecoder {
       try {
         frames.push(JSON.parse(line));
       } catch {
-        console.warn('[exporter-protocol] dropping malformed frame:', line.slice(0, 200));
+        // Never log the line itself - it's untrusted transcript content and
+        // may carry secrets (API keys, tokens) a user pasted into a session.
+        console.warn(`[exporter-protocol] dropping malformed frame (${line.length} bytes)`);
       }
     }
     return frames;
