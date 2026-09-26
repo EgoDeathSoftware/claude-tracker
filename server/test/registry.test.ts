@@ -928,4 +928,26 @@ describe('SessionRegistry filters archived sessions by snapshot', () => {
     expect(registry.getProjects({ kinds: ['claude-code'] })).toHaveLength(1);
     await registry.stop();
   });
+
+  it('dispatches a "remote" location source to a RemoteWatcher via addSource', async () => {
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    await registry.addSource({
+      id: 'vps1', name: 'vps1', path: 'remote:vps1',
+      kind: 'claude-code', layout: 'single', location: 'remote',
+    });
+    const watcher = registry.getRemoteWatcher('vps1');
+    expect(watcher).toBeDefined();
+    expect(watcher?.sourceId).toBe('vps1');
+    await registry.stop();
+  });
+
+  it('getRemoteWatcher returns undefined for a non-remote source', async () => {
+    const db = new TrackerDB(':memory:');
+    const registry = new SessionRegistry([], db);
+    await registry.start();
+    expect(registry.getRemoteWatcher('nonexistent')).toBeUndefined();
+    await registry.stop();
+  });
 });
