@@ -4,6 +4,20 @@ import type { ExporterPki } from './exporter/pki.js';
 import type { ExporterListener } from './exporter/listener.js';
 
 const TOKEN_TTL_MS = 15 * 60_000;
+const NAME_PATTERN = /^[a-zA-Z0-9_-]+$/;
+
+export function isValidExporterName(name: string): boolean {
+  return NAME_PATTERN.test(name);
+}
+
+/**
+ * Namespaced so an enrolled exporter's sourceId can never collide with a
+ * host/container source from sources.json (whose ids never contain ':') or
+ * with another exporter enrolled under the same display name.
+ */
+export function remoteSourceId(name: string): string {
+  return `remote:${name}`;
+}
 
 export interface ExporterRouteDeps {
   enrollStore: EnrollStore;
@@ -19,8 +33,11 @@ export function registerExporterRoutes(app: Hono, deps: ExporterRouteDeps): void
     const body = await c.req.json<{ name?: string; dir?: string }>();
     const name = body.name?.trim();
     if (!name) return c.json({ error: 'name required' }, 400);
+    if (!isValidExporterName(name)) {
+      return c.json({ error: 'name must match [a-zA-Z0-9_-]+' }, 400);
+    }
 
-    const token = deps.enrollStore.issueToken(name, name, body.dir, TOKEN_TTL_MS);
+    const token = deps.enrollStore.issueToken(remoteSourceId(name), name, body.dir, TOKEN_TTL_MS);
     const fp = deps.pki.caFingerprintSha256;
     const installCommand
       = `curl -fsSL https://${deps.publicAddr}/exporter/install.sh \\\n`

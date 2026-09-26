@@ -1,6 +1,7 @@
 import { join } from 'node:path';
 import { TrackerDB } from '../db.js';
 import { ExporterPki } from './pki.js';
+import { isValidExporterName, remoteSourceId } from '../exporter-routes.js';
 
 const TOKEN_TTL_MS = 15 * 60_000;
 
@@ -13,6 +14,9 @@ function parseArgs(argv: string[]): { name: string; dir?: string } {
   }
   if (!name) {
     throw new Error('usage: exporter:enroll --name <source-id> [--dir <remote-path>]');
+  }
+  if (!isValidExporterName(name)) {
+    throw new Error('--name must match [a-zA-Z0-9_-]+');
   }
   return dir === undefined ? { name } : { name, dir };
 }
@@ -30,7 +34,7 @@ async function main(): Promise<void> {
 
   const db = new TrackerDB(join(dataDir, 'tracker.db'));
   const pki = await ExporterPki.loadOrCreate(caDir);
-  const token = db.enroll.issueToken(name, name, dir, TOKEN_TTL_MS);
+  const token = db.enroll.issueToken(remoteSourceId(name), name, dir, TOKEN_TTL_MS);
   db.close();
 
   console.log(`curl -fsSL https://${publicAddr}/exporter/install.sh \\`);

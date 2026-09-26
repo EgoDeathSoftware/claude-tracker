@@ -576,6 +576,31 @@ describe('/api/exporters (enabled)', () => {
     expect(res.status).toBe(400);
   });
 
+  it('rejects a name with characters outside [a-zA-Z0-9_-]', async () => {
+    const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
+    const res = await app.request('/api/exporters/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'wsl/../etc' }),
+    });
+    expect(res.status).toBe(400);
+  });
+
+  it('namespaces the sourceId so an enrolled exporter cannot collide with a configured source', async () => {
+    const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
+    const res = await app.request('/api/exporters/enroll', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ name: 'wsl' }),
+    });
+    expect(res.status).toBe(201);
+    const body = await res.json() as { installCommand: string };
+    const token = /--token (\S+)/.exec(body.installCommand)?.[1];
+    expect(token).toBeDefined();
+    const consumed = exporterDeps.enrollStore.consumeToken(token!);
+    expect(consumed?.sourceId).toBe('remote:wsl');
+  });
+
   it('GET /api/exporters lists issued certs', async () => {
     exporterDeps.enrollStore.recordCert('aa', 'vps1', 'vps1', '2027-01-01T00:00:00.000Z');
     const app = buildApp(registry, db, '/tmp/llm.json', exporterDeps);
